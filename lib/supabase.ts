@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://tlyeyphchmxuqrefvcoj.supabase.co/rest/v1/';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRseWV5cGhjaG14dXFyZWZ2Y29qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNDYxMDEsImV4cCI6MjEwMzgyMjEwMX0.h4wbuTdzSB5TSD7DQTqInS-Pyfp3_WExhY54dpE0QUM';
+// Pastikan TIDAK ADA garis miring (/) atau path tambahan seperti /rest/v1 di belakangnya
+const supabaseUrl = 'https://tlyeyphchmxuqrefvcoj.supabase.co'; 
+const supabaseAnonKey = 'sb_publishable_p7NuRgoOOAi_xN5m1eLyzg_BQ14vGAA'; 
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
