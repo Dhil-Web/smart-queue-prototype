@@ -1,19 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    const { currentQueue, userQueue, avgServiceTime = 5, travelTimeMinutes = 10 } = body;
+    const body = await req.json();
+    const { currentQueue = 10, userQueue = 18, avgServiceTime = 5, travelTimeMinutes = 10 } = body;
 
-    const remainingPeople = Math.max(0, userQueue - currentQueue);
-    const waitTimeMinutes = remainingPeople * avgServiceTime;
+    const remainingPeople = Math.max(0, Number(userQueue) - Number(currentQueue));
+    const waitTimeMinutes = remainingPeople * Number(avgServiceTime);
 
     const now = new Date();
     const estimatedCallTime = new Date(now.getTime() + waitTimeMinutes * 60000);
     const bufferMinutes = 5;
-    
+
     const departureTime = new Date(
-      estimatedCallTime.getTime() - (travelTimeMinutes + bufferMinutes) * 60000
+      estimatedCallTime.getTime() - (Number(travelTimeMinutes) + bufferMinutes) * 60000
     );
 
     return NextResponse.json({
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       departureTime: departureTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       bufferMinutes
     });
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed to calculate' }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: 'Terjadi kesalahan kalkulasi' }, { status: 400 });
   }
 }
