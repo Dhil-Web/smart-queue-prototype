@@ -14,10 +14,11 @@ import {
   MapPin, 
   Lock, 
   KeyRound, 
-  LogOut,
-  AlertCircle,
-  RotateCcw,
-  Stethoscope
+  LogOut, 
+  AlertCircle, 
+  RotateCcw, 
+  Stethoscope,
+  XCircle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -29,11 +30,10 @@ interface PatientQueue {
   location: string;
   travel_mode: 'motor' | 'mobil';
   travel_time: number;
-  status: 'waiting' | 'in-progress' | 'completed';
+  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
   created_at: string;
 }
 
-// Daftar Poli Umum & Spesialis Lengkap
 const POLI_OPTIONS = [
   'Poli Umum',
   'Poli Gigi & Mulut',
@@ -122,7 +122,6 @@ export default function AdminDashboardPage() {
     await supabase.from('queues').update({ status: 'completed' }).eq('id', id);
   };
 
-  // Resepsionis Mengalihkan / Mengubah Poli Pasien
   const handleUpdatePoli = async (id: number, newPoli: string) => {
     const { error } = await supabase
       .from('queues')
@@ -306,7 +305,7 @@ export default function AdminDashboardPage() {
               Daftar Antrean & Kontrol Alokasi Poli
             </h2>
             <span className="text-[11px] text-slate-400 italic">
-              *Resepsionis dapat mengalihkan poli pasien langsung via dropdown di bawah
+              *Antrean &quot;Ubah Data&quot; otomatis terkunci dan tidak dapat diubah
             </span>
           </div>
 
@@ -323,89 +322,118 @@ export default function AdminDashboardPage() {
                   <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
                     <th className="py-3 px-3">No. Antrean</th>
                     <th className="py-3 px-3">Nama Pasien</th>
-                    <th className="py-3 px-3">Poli Tujuan (Bisa Dialihkan)</th>
+                    <th className="py-3 px-3">Poli Tujuan</th>
                     <th className="py-3 px-3">Estimasi Jarak & Titik Mulai</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-3 text-right">Aksi Loket</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {queueList.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/80 transition">
-                      <td className="py-3.5 px-3">
-                        <span className="text-sm font-extrabold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
-                          #{item.queue_number}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="font-bold text-slate-800 text-sm">{item.name}</div>
-                        <span className="text-[10px] text-slate-400">ID: {item.id}</span>
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <Stethoscope className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
-                          <select
-                            value={item.poli}
-                            onChange={(e) => handleUpdatePoli(item.id, e.target.value)}
-                            className="bg-slate-50 border border-slate-200 hover:border-indigo-400 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-                          >
-                            {POLI_OPTIONS.map((poliName) => (
-                              <option key={poliName} value={poliName}>
-                                {poliName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="flex items-center gap-1.5 text-slate-700 font-medium">
-                          <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="truncate max-w-[170px]">{item.location}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400">
-                          Waktu tempuh: ±{item.travel_time} mnt ({item.travel_mode})
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-3">
-                        {item.status === 'in-progress' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 animate-pulse">
-                            <Activity className="w-3 h-3" /> Diperiksa
+                  {queueList.map((item) => {
+                    const isCancelled = item.status === 'cancelled';
+
+                    return (
+                      <tr 
+                        key={item.id} 
+                        className={`transition ${isCancelled ? 'bg-slate-50/90 opacity-60' : 'hover:bg-slate-50/80'}`}
+                      >
+                        <td className="py-3.5 px-3">
+                          <span className={`text-sm font-extrabold px-2.5 py-1 rounded-lg border ${
+                            isCancelled 
+                              ? 'text-slate-400 bg-slate-100 border-slate-200 line-through' 
+                              : 'text-slate-800 bg-slate-100 border-slate-200'
+                          }`}>
+                            #{item.queue_number}
                           </span>
-                        )}
-                        {item.status === 'waiting' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-200">
-                            <Clock className="w-3 h-3" /> Menunggu / OTW
+                        </td>
+
+                        <td className="py-3.5 px-3">
+                          <div className={`font-bold text-sm ${isCancelled ? 'text-slate-500' : 'text-slate-800'}`}>
+                            {item.name}
+                          </div>
+                          <span className="text-[10px] text-slate-400">ID: {item.id}</span>
+                        </td>
+
+                        <td className="py-3.5 px-3">
+                          <div className="flex items-center gap-1.5">
+                            <Stethoscope className={`w-3.5 h-3.5 flex-shrink-0 ${isCancelled ? 'text-slate-300' : 'text-indigo-500'}`} />
+                            {isCancelled ? (
+                              <span className="text-slate-400 font-medium px-2 py-1 bg-slate-100 rounded-lg text-xs">
+                                {item.poli}
+                              </span>
+                            ) : (
+                              <select
+                                value={item.poli}
+                                onChange={(e) => handleUpdatePoli(item.id, e.target.value)}
+                                className="bg-slate-50 border border-slate-200 hover:border-indigo-400 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
+                              >
+                                {POLI_OPTIONS.map((poliName) => (
+                                  <option key={poliName} value={poliName}>
+                                    {poliName}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-3">
+                          <div className="flex items-center gap-1.5 text-slate-700 font-medium">
+                            <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="truncate max-w-[170px]">{item.location}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400">
+                            Waktu tempuh: ±{item.travel_time} mnt ({item.travel_mode})
                           </span>
-                        )}
-                        {item.status === 'completed' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-200">
-                            <Check className="w-3 h-3" /> Selesai
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-3 text-right">
-                        {item.status === 'waiting' && (
-                          <button
-                            onClick={() => handleCallPatient(item.id)}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition inline-flex items-center gap-1 text-[11px]"
-                          >
-                            <Play className="w-3 h-3" /> Panggil
-                          </button>
-                        )}
-                        {item.status === 'in-progress' && (
-                          <button
-                            onClick={() => handleCompletePatient(item.id)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition inline-flex items-center gap-1 text-[11px]"
-                          >
-                            <CheckCircle2 className="w-3 h-3" /> Selesaikan
-                          </button>
-                        )}
-                        {item.status === 'completed' && (
-                          <span className="text-slate-400 text-[11px] font-medium">Terselesaikan</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+
+                        <td className="py-3.5 px-3">
+                          {item.status === 'cancelled' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 border border-slate-300">
+                              <XCircle className="w-3 h-3 text-slate-500" /> Ubah Data
+                            </span>
+                          )}
+                          {item.status === 'in-progress' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 animate-pulse">
+                              <Activity className="w-3 h-3" /> Diperiksa
+                            </span>
+                          )}
+                          {item.status === 'waiting' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-200">
+                              <Clock className="w-3 h-3" /> Menunggu / OTW
+                            </span>
+                          )}
+                          {item.status === 'completed' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-200">
+                              <Check className="w-3 h-3" /> Selesai
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-3 text-right">
+                          {item.status === 'cancelled' ? (
+                            <span className="text-slate-400 text-[11px] italic">Dibatalkan (Ubah Data)</span>
+                          ) : item.status === 'waiting' ? (
+                            <button
+                              onClick={() => handleCallPatient(item.id)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition inline-flex items-center gap-1 text-[11px]"
+                            >
+                              <Play className="w-3 h-3" /> Panggil
+                            </button>
+                          ) : item.status === 'in-progress' ? (
+                            <button
+                              onClick={() => handleCompletePatient(item.id)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition inline-flex items-center gap-1 text-[11px]"
+                            >
+                              <CheckCircle2 className="w-3 h-3" /> Selesaikan
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] font-medium">Terselesaikan</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -413,7 +441,7 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Modal Tambah Pasien Manual dengan Pilihan Lengkap Poli Spesialis */}
+      {/* Modal Tambah Pasien Manual */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100">

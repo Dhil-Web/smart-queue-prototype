@@ -26,7 +26,7 @@ interface PatientQueue {
   location: string;
   travel_mode: 'motor' | 'mobil';
   travel_time: number;
-  status: 'waiting' | 'in-progress' | 'completed';
+  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
 }
 
 export default function PatientPage() {
@@ -46,9 +46,9 @@ export default function PatientPage() {
 
   // State Modal Peringatan Ubah Data
   const [showEditWarning, setShowEditWarning] = useState(false);
-  const [isDeletingOldData, setIsDeletingOldData] = useState(false);
+  const [isUpdatingOldData, setIsUpdatingOldData] = useState(false);
 
-  const avgServiceTime = 5; // 5 menit per pasien
+  const avgServiceTime = 5;
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const fetchQueues = async () => {
@@ -84,12 +84,12 @@ export default function PatientPage() {
     };
   }, []);
 
-  // Hitung nomor antrean berikutnya
+  // Hitung nomor antrean berikutnya (mengabaikan atau melanjutkan dari nomor terbesar)
   const nextQueueNumber = queueList.length > 0 
     ? Math.max(...queueList.map((p) => p.queue_number)) + 1 
     : 1;
 
-  // Pasien yang sedang dilayani
+  // Pasien yang sedang dilayani saat ini (hanya yang aktif)
   const activePatient = queueList.find((p) => p.status === 'in-progress');
   const currentQueueNum = activePatient 
     ? activePatient.queue_number 
@@ -108,7 +108,6 @@ export default function PatientPage() {
     }
   };
 
-  // Submit Registrasi Pasien Baru
   const handlePatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -120,7 +119,6 @@ export default function PatientPage() {
       return;
     }
 
-    // Ambil nomor antrean terbaru
     const { data: latestData } = await supabase
       .from('queues')
       .select('queue_number')
@@ -155,23 +153,27 @@ export default function PatientPage() {
     setIsSubmitting(false);
   };
 
-  // Eksekusi Hapus Data Lama & Buka Form Kembali
+  // Tandai Data Sebelumnya sebagai "cancelled" (Ubah Data)
   const handleConfirmEdit = async () => {
-    setIsDeletingOldData(true);
+    setIsUpdatingOldData(true);
     if (registeredQueueId) {
       await supabase
         .from('queues')
-        .delete()
+        .update({ status: 'cancelled' })
         .eq('id', registeredQueueId);
+      
       setRegisteredQueueId(null);
     }
-    setIsDeletingOldData(false);
+    setIsUpdatingOldData(false);
     setShowEditWarning(false);
     setStep('form');
   };
 
-  // Kalkulasi Dashboard Pasien
-  const waitingPatientsBeforeUser = queueList.filter((p) => p.queue_number < assignedQueue && p.status !== 'completed').length;
+  // Kalkulasi hanya menghitung antrean aktif (mengecualikan yang cancelled & completed)
+  const waitingPatientsBeforeUser = queueList.filter(
+    (p) => p.queue_number < assignedQueue && p.status === 'waiting'
+  ).length;
+  
   const estimatedWaitMinutes = waitingPatientsBeforeUser * avgServiceTime;
   const estimatedCallDate = new Date(currentTime.getTime() + estimatedWaitMinutes * 60000);
   const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
@@ -297,7 +299,7 @@ export default function PatientPage() {
                 </button>
               </div>
 
-              {/* Pilihan Moda Transportasi & Durasi */}
+              {/* Moda Transportasi */}
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
@@ -419,7 +421,7 @@ export default function PatientPage() {
           </div>
         )}
 
-        {/* MODAL PERINGATAN UBAH DATA (MENCEGAH DUPLIKASI) */}
+        {/* MODAL PERINGATAN UBAH DATA */}
         {showEditWarning && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 text-center">
@@ -431,13 +433,13 @@ export default function PatientPage() {
                 Peringatan Perubahan Data
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed mb-5">
-                Mengubah data akan <span className="font-bold text-rose-600">membatalkan antrean #{assignedQueue}</span> dan menghapus pendaftaran Anda sebelumnya dari server untuk mencegah duplikasi. Anda akan mendapatkan nomor antrean baru setelah mendaftar ulang.
+                Mengubah data akan menandai antrean <span className="font-bold text-rose-600">#{assignedQueue}</span> sebagai batal (*Ubah Data*). Anda perlu mengambil nomor antrean baru setelah memperbarui formulir.
               </p>
 
               <div className="flex gap-2">
                 <button
                   type="button"
-                  disabled={isDeletingOldData}
+                  disabled={isUpdatingOldData}
                   onClick={() => setShowEditWarning(false)}
                   className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition"
                 >
@@ -445,14 +447,14 @@ export default function PatientPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={isDeletingOldData}
+                  disabled={isUpdatingOldData}
                   onClick={handleConfirmEdit}
                   className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-1.5"
                 >
-                  {isDeletingOldData ? (
+                  {isUpdatingOldData ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Menghapus...
+                      Memproses...
                     </>
                   ) : (
                     'Ya, Ubah Data'
