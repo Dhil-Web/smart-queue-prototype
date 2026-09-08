@@ -16,7 +16,8 @@ import {
   KeyRound, 
   LogOut,
   AlertCircle,
-  RotateCcw
+  RotateCcw,
+  Stethoscope
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -32,6 +33,21 @@ interface PatientQueue {
   created_at: string;
 }
 
+// Daftar Poli Umum & Spesialis Lengkap
+const POLI_OPTIONS = [
+  'Poli Umum',
+  'Poli Gigi & Mulut',
+  'Poli Spesialis Anak (Pediatri)',
+  'Poli Spesialis Penyakit Dalam (Internis)',
+  'Poli Spesialis Jantung & Pembuluh Darah',
+  'Poli Spesialis Mata',
+  'Poli Spesialis THT',
+  'Poli Spesialis Kulit & Kelamin',
+  'Poli Spesialis Saraf (Neurologi)',
+  'Poli Spesialis Bedah Umum',
+  'Poli Spesialis Kandungan & Kebidanan (Obgyn)'
+];
+
 export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
@@ -40,6 +56,7 @@ export default function AdminDashboardPage() {
   const [queueList, setQueueList] = useState<PatientQueue[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Form Tambah Pasien Manual
   const [adminName, setAdminName] = useState('');
   const [adminPoli, setAdminPoli] = useState('Poli Umum');
   const [adminLoc, setAdminLoc] = useState('Loket Pendaftaran RS');
@@ -89,10 +106,10 @@ export default function AdminDashboardPage() {
     };
   }, [isAuthenticated]);
 
-  const activePatient = queueList.find(p => p.status === 'in-progress');
+  const activePatient = queueList.find((p) => p.status === 'in-progress');
   const currentQueueNum = activePatient 
     ? activePatient.queue_number 
-    : (queueList.find(p => p.status === 'waiting')?.queue_number || 0);
+    : (queueList.find((p) => p.status === 'waiting')?.queue_number || 0);
 
   const handleCallPatient = async (id: number) => {
     if (activePatient) {
@@ -103,6 +120,18 @@ export default function AdminDashboardPage() {
 
   const handleCompletePatient = async (id: number) => {
     await supabase.from('queues').update({ status: 'completed' }).eq('id', id);
+  };
+
+  // Resepsionis Mengalihkan / Mengubah Poli Pasien
+  const handleUpdatePoli = async (id: number, newPoli: string) => {
+    const { error } = await supabase
+      .from('queues')
+      .update({ poli: newPoli })
+      .eq('id', id);
+
+    if (error) {
+      alert('Gagal memperbarui poli: ' + error.message);
+    }
   };
 
   const handleAdminAddPatient = async (e: React.FormEvent) => {
@@ -126,7 +155,6 @@ export default function AdminDashboardPage() {
     setShowAddModal(false);
   };
 
-  // Fitur Reset Seluruh Antrean
   const handleResetQueue = async () => {
     const confirmReset = window.confirm(
       'Apakah Anda yakin ingin mereset seluruh antrean? Semua data antrean saat ini akan dihapus dan antrean berikutnya kembali dari #1.'
@@ -188,14 +216,14 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-start p-4 md:p-8 font-sans text-slate-800">
-      <div className="w-full max-w-5xl bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
+      <div className="w-full max-w-6xl bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
         
         {/* Header Admin */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider mb-1">
               <ShieldCheck className="w-4 h-4" />
-              Loket Resepsionis & Dokter (Live Supabase)
+              Loket Resepsionis & Dokter (Triase Spesialis)
             </div>
             <h1 className="text-2xl font-bold">Manajemen Antrean Presisi</h1>
             <p className="text-xs text-slate-300">RS Sehat Sentosa — Poliklinik Terintegrasi AI</p>
@@ -231,7 +259,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Statistik */}
+        {/* Statistik Ringkas */}
         <div className="grid grid-cols-3 gap-4 p-6 border-b border-slate-100 bg-slate-50/50">
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
             <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
@@ -240,7 +268,7 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Sedang Diperiksa</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter(p => p.status === 'in-progress').length} Pasien
+                {queueList.filter((p) => p.status === 'in-progress').length} Pasien
               </span>
             </div>
           </div>
@@ -252,7 +280,7 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Menunggu / OTW</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter(p => p.status === 'waiting').length} Pasien
+                {queueList.filter((p) => p.status === 'waiting').length} Pasien
               </span>
             </div>
           </div>
@@ -264,18 +292,23 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Selesai Berobat</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter(p => p.status === 'completed').length} Pasien
+                {queueList.filter((p) => p.status === 'completed').length} Pasien
               </span>
             </div>
           </div>
         </div>
 
-        {/* Tabel Pasien */}
+        {/* Tabel Antrean */}
         <div className="p-6">
-          <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Users className="w-4 h-4 text-indigo-600" />
-            Daftar Antrean Pasien Masuk
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4 text-indigo-600" />
+              Daftar Antrean & Kontrol Alokasi Poli
+            </h2>
+            <span className="text-[11px] text-slate-400 italic">
+              *Resepsionis dapat mengalihkan poli pasien langsung via dropdown di bawah
+            </span>
+          </div>
 
           {loading ? (
             <p className="text-xs text-slate-400 py-6 text-center">Sinkronisasi data Supabase...</p>
@@ -289,7 +322,8 @@ export default function AdminDashboardPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
                     <th className="py-3 px-3">No. Antrean</th>
-                    <th className="py-3 px-3">Nama Pasien & Poli</th>
+                    <th className="py-3 px-3">Nama Pasien</th>
+                    <th className="py-3 px-3">Poli Tujuan (Bisa Dialihkan)</th>
                     <th className="py-3 px-3">Estimasi Jarak & Titik Mulai</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-3 text-right">Aksi Loket</th>
@@ -305,12 +339,28 @@ export default function AdminDashboardPage() {
                       </td>
                       <td className="py-3.5 px-3">
                         <div className="font-bold text-slate-800 text-sm">{item.name}</div>
-                        <span className="text-[11px] text-blue-600">{item.poli}</span>
+                        <span className="text-[10px] text-slate-400">ID: {item.id}</span>
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          <Stethoscope className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                          <select
+                            value={item.poli}
+                            onChange={(e) => handleUpdatePoli(item.id, e.target.value)}
+                            className="bg-slate-50 border border-slate-200 hover:border-indigo-400 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
+                          >
+                            {POLI_OPTIONS.map((poliName) => (
+                              <option key={poliName} value={poliName}>
+                                {poliName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </td>
                       <td className="py-3.5 px-3">
                         <div className="flex items-center gap-1.5 text-slate-700 font-medium">
                           <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="truncate max-w-[180px]">{item.location}</span>
+                          <span className="truncate max-w-[170px]">{item.location}</span>
                         </div>
                         <span className="text-[10px] text-slate-400">
                           Waktu tempuh: ±{item.travel_time} mnt ({item.travel_mode})
@@ -363,12 +413,12 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Modal Tambah Pasien Manual */}
+      {/* Modal Tambah Pasien Manual dengan Pilihan Lengkap Poli Spesialis */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100">
             <h2 className="text-base font-bold text-slate-800 mb-1">Tambah Pasien Loket Manual</h2>
-            <p className="text-xs text-slate-500 mb-4">Untuk pasien yang datang langsung ke RS</p>
+            <p className="text-xs text-slate-500 mb-4">Pilih poli umum atau spesialis sesuai indikasi medis</p>
 
             <form onSubmit={handleAdminAddPatient} className="space-y-3">
               <div>
@@ -390,10 +440,11 @@ export default function AdminDashboardPage() {
                   onChange={(e) => setAdminPoli(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="Poli Umum">Poli Umum</option>
-                  <option value="Poli Gigi">Poli Gigi & Mulut</option>
-                  <option value="Poli Anak">Poli Anak</option>
-                  <option value="Poli Penyakit Dalam">Poli Penyakit Dalam</option>
+                  {POLI_OPTIONS.map((poliName) => (
+                    <option key={poliName} value={poliName}>
+                      {poliName}
+                    </option>
+                  ))}
                 </select>
               </div>
 
