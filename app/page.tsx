@@ -11,7 +11,8 @@ import {
   ChevronLeft, 
   AlertCircle, 
   Clock, 
-  ArrowRight
+  ArrowRight,
+  Hash
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -33,15 +34,17 @@ export default function PatientPage() {
   // State Form Pasien
   const [patientName, setPatientName] = useState('');
   const [selectedPoli, setSelectedPoli] = useState('');
-  const [userQueue, setUserQueue] = useState<number | ''>('');
   const [locationName, setLocationName] = useState('');
   const [travelMode, setTravelMode] = useState<'motor' | 'mobil'>('motor');
   const [travelTime, setTravelTime] = useState<number | ''>('');
+  const [assignedQueue, setAssignedQueue] = useState<number>(1);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const avgServiceTime = 5;
+  const avgServiceTime = 5; // 5 menit per pasien
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Ambil Data Antrean dari Supabase
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -56,6 +59,7 @@ export default function PatientPage() {
   useEffect(() => {
     fetchQueues();
 
+    // Dengar perubahan database secara Realtime
     const channel = supabase
       .channel('realtime_patient_queues')
       .on(
@@ -75,11 +79,18 @@ export default function PatientPage() {
     };
   }, []);
 
+  // Hitung nomor antrean berikutnya secara otomatis (Max Queue + 1)
+  const nextQueueNumber = queueList.length > 0 
+    ? Math.max(...queueList.map((p) => p.queue_number)) + 1 
+    : 1;
+
+  // Pasien yang sedang dilayani saat ini
   const activePatient = queueList.find((p) => p.status === 'in-progress');
   const currentQueueNum = activePatient 
     ? activePatient.queue_number 
     : (queueList.find((p) => p.status === 'waiting')?.queue_number || 0);
 
+  // Preset Jarak
   const handleLocationPreset = (preset: 'dekat' | 'sedang' | 'jauh') => {
     if (preset === 'dekat') {
       setLocationName('Area Sekitar RS (±2 km)');
@@ -93,18 +104,30 @@ export default function PatientPage() {
     }
   };
 
+  // Submit Registrasi Pasien
   const handlePatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setIsSubmitting(true);
 
-    if (!patientName.trim() || !selectedPoli || !locationName.trim() || userQueue === '' || travelTime === '') {
+    if (!patientName.trim() || !selectedPoli || !locationName.trim() || travelTime === '') {
       setErrorMessage('Semua field wajib diisi.');
+      setIsSubmitting(false);
       return;
     }
 
+    // Ambil data antrean paling mutakhir sebelum insert untuk menghindari tabrakan nomor
+    const { data: latestData } = await supabase
+      .from('queues')
+      .select('queue_number')
+      .order('queue_number', { ascending: false })
+      .limit(1);
+
+    const latestNumber = (latestData && latestData.length > 0) ? latestData[0].queue_number + 1 : 1;
+
     const { error } = await supabase.from('queues').insert([
       {
-        queue_number: Number(userQueue),
+        queue_number: latestNumber,
         name: patientName,
         poli: selectedPoli,
         location: locationName,
@@ -116,17 +139,20 @@ export default function PatientPage() {
 
     if (error) {
       setErrorMessage('Gagal mendaftar antrean: ' + error.message);
+      setIsSubmitting(false);
       return;
     }
 
+    setAssignedQueue(latestNumber);
     setStep('dashboard');
+    setIsSubmitting(false);
   };
 
-  const numericUserQueue = typeof userQueue === 'number' ? userQueue : currentQueueNum;
-  const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
-  const waitingPatientsBeforeUser = queueList.filter((p) => p.queue_number < numericUserQueue && p.status !== 'completed').length;
+  // Kalkulasi Waktu di Dashboard Pasien
+  const waitingPatientsBeforeUser = queueList.filter((p) => p.queue_number < assignedQueue && p.status !== 'completed').length;
   const estimatedWaitMinutes = waitingPatientsBeforeUser * avgServiceTime;
   const estimatedCallDate = new Date(currentTime.getTime() + estimatedWaitMinutes * 60000);
+  const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
   const departureDate = new Date(estimatedCallDate.getTime() - (numericTravelTime + 5) * 60000);
 
   const formatTime = (date: Date) => date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
@@ -135,7 +161,7 @@ export default function PatientPage() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
         
-        {/* Header Portal Pasien */}
+        {/* Header Pasien */}
         <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 p-6 text-white text-center relative">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
             <Sparkles className="w-3.5 h-3.5 text-blue-200" />
@@ -154,6 +180,23 @@ export default function PatientPage() {
               </div>
             )}
 
+            {/* Nomor Antrean Otomatis */}
+            <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-100 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-blue-900 flex items-center gap-1">
+                  <Hash className="w-3.5 h-3.5 text-blue-600" /> Nomor Antrean Kamu (Otomatis)
+                </p>
+                <p className="text-[11px] text-blue-600">
+                  {queueList.filter(p => p.status === 'waiting').length} pasien menunggu di antrean
+                </p>
+              </div>
+              <div className="flex items-center gap-1 bg-white px-3.5 py-1.5 rounded-xl border border-blue-200 shadow-sm">
+                <span className="text-xs font-bold text-blue-500">#</span>
+                <span className="font-extrabold text-xl text-blue-600">{nextQueueNumber}</span>
+              </div>
+            </div>
+
+            {/* Identitas Pasien */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
                 Identitas Pasien *
@@ -189,26 +232,7 @@ export default function PatientPage() {
               </div>
             </div>
 
-            <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-100 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold text-blue-900">Nomor Antrean Anda *</p>
-                <p className="text-[11px] text-blue-600">Antrean berjalan saat ini: #{currentQueueNum || '-'}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-blue-600">#</span>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  max="99"
-                  value={userQueue}
-                  onChange={(e) => setUserQueue(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="14"
-                  className="w-16 text-center font-bold text-lg py-1 bg-white border border-blue-200 rounded-lg text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
+            {/* Lokasi Pasien */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
                 Lokasi Keberangkatan Pasien *
@@ -226,6 +250,7 @@ export default function PatientPage() {
                 />
               </div>
 
+              {/* Preset Cepat */}
               <div className="grid grid-cols-3 gap-1.5 mb-3">
                 <button
                   type="button"
@@ -250,6 +275,7 @@ export default function PatientPage() {
                 </button>
               </div>
 
+              {/* Pilihan Transportasi & Durasi */}
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
@@ -290,9 +316,10 @@ export default function PatientPage() {
 
             <button
               type="submit"
-              className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 transition active:scale-[0.98]"
+              disabled={isSubmitting}
+              className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 transition active:scale-[0.98]"
             >
-              Hitung Rekomendasi Jam Berangkat
+              {isSubmitting ? 'Mendaftarkan Antrean...' : 'Hitung Rekomendasi Jam Berangkat'}
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
@@ -315,11 +342,11 @@ export default function PatientPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 text-center">
                 <span className="text-[11px] font-medium text-slate-500 block mb-1">Antrean Saat Ini</span>
-                <span className="text-3xl font-extrabold text-slate-800">#{currentQueueNum}</span>
+                <span className="text-3xl font-extrabold text-slate-800">#{currentQueueNum || '-'}</span>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3.5 text-center">
                 <span className="text-[11px] font-medium text-blue-600 block mb-1">Nomor Kamu</span>
-                <span className="text-3xl font-extrabold text-blue-600">#{numericUserQueue}</span>
+                <span className="text-3xl font-extrabold text-blue-600">#{assignedQueue}</span>
               </div>
             </div>
 
