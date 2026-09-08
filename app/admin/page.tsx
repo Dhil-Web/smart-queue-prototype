@@ -15,7 +15,8 @@ import {
   Lock, 
   KeyRound, 
   LogOut,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -32,22 +33,19 @@ interface PatientQueue {
 }
 
 export default function AdminDashboardPage() {
-  // Autentikasi Sederhana Resepsionis
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Data Antrean Realtime
   const [queueList, setQueueList] = useState<PatientQueue[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form Tambah Pasien Manual
   const [adminName, setAdminName] = useState('');
   const [adminPoli, setAdminPoli] = useState('Poli Umum');
   const [adminLoc, setAdminLoc] = useState('Loket Pendaftaran RS');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
-  // PIN Admin Default: 1234
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (pin === '1234') {
@@ -111,7 +109,7 @@ export default function AdminDashboardPage() {
     e.preventDefault();
     if (!adminName.trim()) return;
 
-    const maxQueue = queueList.reduce((max, p) => p.queue_number > max ? p.queue_number : max, 10);
+    const maxQueue = queueList.reduce((max, p) => p.queue_number > max ? p.queue_number : max, 0);
     await supabase.from('queues').insert([
       {
         queue_number: maxQueue + 1,
@@ -128,7 +126,24 @@ export default function AdminDashboardPage() {
     setShowAddModal(false);
   };
 
-  // TAMPILAN 1: FORM LOGIN RESEPSIONIS
+  // Fitur Reset Seluruh Antrean
+  const handleResetQueue = async () => {
+    const confirmReset = window.confirm(
+      'Apakah Anda yakin ingin mereset seluruh antrean? Semua data antrean saat ini akan dihapus dan antrean berikutnya kembali dari #1.'
+    );
+    if (!confirmReset) return;
+
+    setIsResetting(true);
+    const { error } = await supabase.from('queues').delete().neq('id', 0);
+
+    if (!error) {
+      setQueueList([]);
+    } else {
+      alert('Gagal mereset antrean: ' + error.message);
+    }
+    setIsResetting(false);
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans text-slate-800">
@@ -171,7 +186,6 @@ export default function AdminDashboardPage() {
     );
   }
 
-  // TAMPILAN 2: DASHBOARD UTAMA PETUGAS
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-start p-4 md:p-8 font-sans text-slate-800">
       <div className="w-full max-w-5xl bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
@@ -197,6 +211,15 @@ export default function AdminDashboardPage() {
               className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md"
             >
               <Plus className="w-4 h-4" /> Pasien Loket
+            </button>
+            <button
+              onClick={handleResetQueue}
+              disabled={isResetting}
+              className="px-3.5 py-2.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition border border-rose-500/30"
+              title="Reset seluruh antrean"
+            >
+              <RotateCcw className="w-4 h-4" />
+              {isResetting ? 'Mereset...' : 'Reset Antrean'}
             </button>
             <button
               onClick={() => setIsAuthenticated(false)}
@@ -256,6 +279,10 @@ export default function AdminDashboardPage() {
 
           {loading ? (
             <p className="text-xs text-slate-400 py-6 text-center">Sinkronisasi data Supabase...</p>
+          ) : queueList.length === 0 ? (
+            <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-2xl">
+              Belum ada antrean terdaftar. Antrean berikutnya akan dimulai dari nomor #1.
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
