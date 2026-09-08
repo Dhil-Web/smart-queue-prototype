@@ -11,10 +11,10 @@ import {
   ChevronLeft, 
   AlertCircle, 
   Clock, 
-  ArrowRight,
-  Hash,
-  AlertTriangle,
-  Loader2
+  ArrowRight, 
+  Hash, 
+  AlertTriangle, 
+  Loader2 
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -28,6 +28,8 @@ interface PatientQueue {
   travel_time: number;
   status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
 }
+
+const STORAGE_KEY = 'smartarrive_patient_session';
 
 export default function PatientPage() {
   const [step, setStep] = useState<'form' | 'dashboard'>('form');
@@ -51,6 +53,28 @@ export default function PatientPage() {
   const avgServiceTime = 5;
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // 1. Ambil sesi antrean dari localStorage saat awal buka / refresh
+  useEffect(() => {
+    const savedSession = localStorage.getItem(STORAGE_KEY);
+    if (savedSession) {
+      try {
+        const parsed = JSON.parse(savedSession);
+        if (parsed && parsed.id) {
+          setRegisteredQueueId(parsed.id);
+          setPatientName(parsed.name || '');
+          setSelectedPoli(parsed.poli || '');
+          setLocationName(parsed.location || '');
+          setTravelMode(parsed.travel_mode || 'motor');
+          setTravelTime(parsed.travel_time || 0);
+          setAssignedQueue(parsed.queue_number || 1);
+          setStep('dashboard');
+        }
+      } catch (err) {
+        console.error('Gagal membaca sesi lokal:', err);
+      }
+    }
+  }, []);
+
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -58,7 +82,22 @@ export default function PatientPage() {
       .order('queue_number', { ascending: true });
 
     if (!error && data) {
-      setQueueList(data as PatientQueue[]);
+      const list = data as PatientQueue[];
+      setQueueList(list);
+
+      // Cek apakah data antrean pasien masih valid di database
+      const savedSession = localStorage.getItem(STORAGE_KEY);
+      if (savedSession) {
+        const parsed = JSON.parse(savedSession);
+        const currentData = list.find((p) => p.id === parsed.id);
+        
+        // Jika antrean sudah di-reset oleh admin atau diubah, kembalikan ke form
+        if (!currentData || currentData.status === 'cancelled') {
+          localStorage.removeItem(STORAGE_KEY);
+          setRegisteredQueueId(null);
+          setStep('form');
+        }
+      }
     }
   };
 
@@ -84,12 +123,10 @@ export default function PatientPage() {
     };
   }, []);
 
-  // Hitung nomor antrean berikutnya (mengabaikan atau melanjutkan dari nomor terbesar)
   const nextQueueNumber = queueList.length > 0 
     ? Math.max(...queueList.map((p) => p.queue_number)) + 1 
     : 1;
 
-  // Pasien yang sedang dilayani saat ini (hanya yang aktif)
   const activePatient = queueList.find((p) => p.status === 'in-progress');
   const currentQueueNum = activePatient 
     ? activePatient.queue_number 
@@ -127,17 +164,20 @@ export default function PatientPage() {
 
     const latestNumber = (latestData && latestData.length > 0) ? latestData[0].queue_number + 1 : 1;
 
-    const { data: insertedData, error } = await supabase.from('queues').insert([
-      {
-        queue_number: latestNumber,
-        name: patientName,
-        poli: selectedPoli,
-        location: locationName,
-        travel_mode: travelMode,
-        travel_time: Number(travelTime),
-        status: 'waiting'
-      }
-    ]).select();
+    const newPatient = {
+      queue_number: latestNumber,
+      name: patientName,
+      poli: selectedPoli,
+      location: locationName,
+      travel_mode: travelMode,
+      travel_time: Number(travelTime),
+      status: 'waiting'
+    };
+
+    const { data: insertedData, error } = await supabase
+      .from('queues')
+      .insert([newPatient])
+      .select();
 
     if (error) {
       setErrorMessage('Gagal mendaftar antrean: ' + error.message);
@@ -146,14 +186,18 @@ export default function PatientPage() {
     }
 
     if (insertedData && insertedData.length > 0) {
-      setRegisteredQueueId(insertedData[0].id);
+      const savedItem = insertedData[0];
+      setRegisteredQueueId(savedItem.id);
+      setAssignedQueue(latestNumber);
+
+      // Simpan sesi ke localStorage agar tahan refresh
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedItem));
     }
-    setAssignedQueue(latestNumber);
+
     setStep('dashboard');
     setIsSubmitting(false);
   };
 
-  // Tandai Data Sebelumnya sebagai "cancelled" (Ubah Data)
   const handleConfirmEdit = async () => {
     setIsUpdatingOldData(true);
     if (registeredQueueId) {
@@ -164,12 +208,14 @@ export default function PatientPage() {
       
       setRegisteredQueueId(null);
     }
+
+    // Bersihkan sesi di browser ketika ubah data
+    localStorage.removeItem(STORAGE_KEY);
     setIsUpdatingOldData(false);
     setShowEditWarning(false);
     setStep('form');
   };
 
-  // Kalkulasi hanya menghitung antrean aktif (mengecualikan yang cancelled & completed)
   const waitingPatientsBeforeUser = queueList.filter(
     (p) => p.queue_number < assignedQueue && p.status === 'waiting'
   ).length;
