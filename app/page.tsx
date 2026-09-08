@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   User, 
   MapPin, 
@@ -14,7 +14,8 @@ import {
   ArrowRight, 
   Hash, 
   AlertTriangle, 
-  Loader2 
+  Loader2,
+  Info
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -44,6 +45,7 @@ export default function PatientPage() {
   const [travelTime, setTravelTime] = useState<number | ''>('');
   const [assignedQueue, setAssignedQueue] = useState<number>(1);
   const [errorMessage, setErrorMessage] = useState('');
+  const [resetNotice, setResetNotice] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // State Modal Peringatan Ubah Data
@@ -53,7 +55,11 @@ export default function PatientPage() {
   const avgServiceTime = 5;
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // 1. Ambil sesi antrean dari localStorage saat awal buka / refresh
+  // Ref untuk melacak ID aktif saat realtime trigger
+  const activeIdRef = useRef<number | null>(null);
+  activeIdRef.current = registeredQueueId;
+
+  // 1. Baca Sesi Lokal saat pertama kali dibuka / di-refresh
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -61,6 +67,7 @@ export default function PatientPage() {
         const parsed = JSON.parse(savedSession);
         if (parsed && parsed.id) {
           setRegisteredQueueId(parsed.id);
+          activeIdRef.current = parsed.id;
           setPatientName(parsed.name || '');
           setSelectedPoli(parsed.poli || '');
           setLocationName(parsed.location || '');
@@ -75,6 +82,7 @@ export default function PatientPage() {
     }
   }, []);
 
+  // 2. Fetch Data dari Supabase & Cek Validitas Antrean
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -85,22 +93,26 @@ export default function PatientPage() {
       const list = data as PatientQueue[];
       setQueueList(list);
 
-      // Cek apakah data antrean pasien masih valid di database
-      const savedSession = localStorage.getItem(STORAGE_KEY);
-      if (savedSession) {
-        const parsed = JSON.parse(savedSession);
-        const currentData = list.find((p) => p.id === parsed.id);
-        
-        // Jika antrean sudah di-reset oleh admin atau diubah, kembalikan ke form
+      const currentActiveId = activeIdRef.current;
+      if (currentActiveId) {
+        const currentData = list.find((p) => p.id === currentActiveId);
+
+        // Jika antrean sudah di-reset oleh admin (data tidak ada di DB) atau berstatus cancelled
         if (!currentData || currentData.status === 'cancelled') {
           localStorage.removeItem(STORAGE_KEY);
           setRegisteredQueueId(null);
+          activeIdRef.current = null;
           setStep('form');
+          if (!currentData) {
+            setResetNotice(true);
+            setTimeout(() => setResetNotice(false), 6000);
+          }
         }
       }
     }
   };
 
+  // 3. Supabase Realtime Listener (Termasuk Event DELETE Saat Admin Reset)
   useEffect(() => {
     fetchQueues();
 
@@ -109,7 +121,20 @@ export default function PatientPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'queues' },
-        () => {
+        (payload) => {
+          // Jika event adalah DELETE (misal reset admin)
+          if (payload.eventType === 'DELETE') {
+            const currentActiveId = activeIdRef.current;
+            // Jika data yang dihapus adalah ID antrean pasien ini, atau jika ID kosong (semua direset)
+            if (!payload.old || payload.old.id === currentActiveId || !currentActiveId) {
+              localStorage.removeItem(STORAGE_KEY);
+              setRegisteredQueueId(null);
+              activeIdRef.current = null;
+              setStep('form');
+              setResetNotice(true);
+              setTimeout(() => setResetNotice(false), 6000);
+            }
+          }
           fetchQueues();
         }
       )
@@ -188,9 +213,9 @@ export default function PatientPage() {
     if (insertedData && insertedData.length > 0) {
       const savedItem = insertedData[0];
       setRegisteredQueueId(savedItem.id);
+      activeIdRef.current = savedItem.id;
       setAssignedQueue(latestNumber);
 
-      // Simpan sesi ke localStorage agar tahan refresh
       localStorage.setItem(STORAGE_KEY, JSON.stringify(savedItem));
     }
 
@@ -207,9 +232,9 @@ export default function PatientPage() {
         .eq('id', registeredQueueId);
       
       setRegisteredQueueId(null);
+      activeIdRef.current = null;
     }
 
-    // Bersihkan sesi di browser ketika ubah data
     localStorage.removeItem(STORAGE_KEY);
     setIsUpdatingOldData(false);
     setShowEditWarning(false);
@@ -240,6 +265,14 @@ export default function PatientPage() {
           <h1 className="text-2xl font-bold tracking-tight">SmartArrive AI</h1>
           <p className="text-xs text-blue-100 mt-0.5">Prediksi Kedatangan Presisi Tanpa Antre di RS</p>
         </div>
+
+        {/* Notifikasi Banner jika Antrean baru saja di-reset Petugas */}
+        {resetNotice && (
+          <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
+            <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span>Sesi antrean telah direset oleh petugas loket RS. Silakan daftar kembali.</span>
+          </div>
+        )}
 
         {step === 'form' ? (
           <form onSubmit={handlePatientSubmit} className="p-6 space-y-4">
@@ -294,9 +327,11 @@ export default function PatientPage() {
                   >
                     <option value="" disabled>-- Pilih Poliklinik Tujuan --</option>
                     <option value="Poli Umum">Poli Umum — dr. Hendra (Lt. 1)</option>
-                    <option value="Poli Gigi">Poli Gigi & Mulut — drg. Sarah (Lt. 2)</option>
-                    <option value="Poli Anak">Poli Tumbuh Kembang Anak (Lt. 2)</option>
-                    <option value="Poli Penyakit Dalam">Poli Penyakit Dalam (Lt. 3)</option>
+                    <option value="Poli Gigi & Mulut">Poli Gigi & Mulut — drg. Sarah (Lt. 2)</option>
+                    <option value="Poli Spesialis Anak (Pediatri)">Poli Spesialis Anak (Pediatri)</option>
+                    <option value="Poli Spesialis Penyakit Dalam (Internis)">Poli Spesialis Penyakit Dalam (Internis)</option>
+                    <option value="Poli Spesialis Jantung & Pembuluh Darah">Poli Spesialis Jantung & Pembuluh Darah</option>
+                    <option value="Poli Spesialis Bedah Umum">Poli Spesialis Bedah Umum</option>
                   </select>
                 </div>
               </div>
