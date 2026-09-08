@@ -12,7 +12,9 @@ import {
   AlertCircle, 
   Clock, 
   ArrowRight,
-  Hash
+  Hash,
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -32,6 +34,7 @@ export default function PatientPage() {
   const [queueList, setQueueList] = useState<PatientQueue[]>([]);
 
   // State Form Pasien
+  const [registeredQueueId, setRegisteredQueueId] = useState<number | null>(null);
   const [patientName, setPatientName] = useState('');
   const [selectedPoli, setSelectedPoli] = useState('');
   const [locationName, setLocationName] = useState('');
@@ -41,10 +44,13 @@ export default function PatientPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // State Modal Peringatan Ubah Data
+  const [showEditWarning, setShowEditWarning] = useState(false);
+  const [isDeletingOldData, setIsDeletingOldData] = useState(false);
+
   const avgServiceTime = 5; // 5 menit per pasien
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Ambil Data Antrean dari Supabase
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -59,7 +65,6 @@ export default function PatientPage() {
   useEffect(() => {
     fetchQueues();
 
-    // Dengar perubahan database secara Realtime
     const channel = supabase
       .channel('realtime_patient_queues')
       .on(
@@ -79,18 +84,17 @@ export default function PatientPage() {
     };
   }, []);
 
-  // Hitung nomor antrean berikutnya secara otomatis (Max Queue + 1)
+  // Hitung nomor antrean berikutnya
   const nextQueueNumber = queueList.length > 0 
     ? Math.max(...queueList.map((p) => p.queue_number)) + 1 
     : 1;
 
-  // Pasien yang sedang dilayani saat ini
+  // Pasien yang sedang dilayani
   const activePatient = queueList.find((p) => p.status === 'in-progress');
   const currentQueueNum = activePatient 
     ? activePatient.queue_number 
     : (queueList.find((p) => p.status === 'waiting')?.queue_number || 0);
 
-  // Preset Jarak
   const handleLocationPreset = (preset: 'dekat' | 'sedang' | 'jauh') => {
     if (preset === 'dekat') {
       setLocationName('Area Sekitar RS (±2 km)');
@@ -104,7 +108,7 @@ export default function PatientPage() {
     }
   };
 
-  // Submit Registrasi Pasien
+  // Submit Registrasi Pasien Baru
   const handlePatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -116,7 +120,7 @@ export default function PatientPage() {
       return;
     }
 
-    // Ambil data antrean paling mutakhir sebelum insert untuk menghindari tabrakan nomor
+    // Ambil nomor antrean terbaru
     const { data: latestData } = await supabase
       .from('queues')
       .select('queue_number')
@@ -125,7 +129,7 @@ export default function PatientPage() {
 
     const latestNumber = (latestData && latestData.length > 0) ? latestData[0].queue_number + 1 : 1;
 
-    const { error } = await supabase.from('queues').insert([
+    const { data: insertedData, error } = await supabase.from('queues').insert([
       {
         queue_number: latestNumber,
         name: patientName,
@@ -135,7 +139,7 @@ export default function PatientPage() {
         travel_time: Number(travelTime),
         status: 'waiting'
       }
-    ]);
+    ]).select();
 
     if (error) {
       setErrorMessage('Gagal mendaftar antrean: ' + error.message);
@@ -143,12 +147,30 @@ export default function PatientPage() {
       return;
     }
 
+    if (insertedData && insertedData.length > 0) {
+      setRegisteredQueueId(insertedData[0].id);
+    }
     setAssignedQueue(latestNumber);
     setStep('dashboard');
     setIsSubmitting(false);
   };
 
-  // Kalkulasi Waktu di Dashboard Pasien
+  // Eksekusi Hapus Data Lama & Buka Form Kembali
+  const handleConfirmEdit = async () => {
+    setIsDeletingOldData(true);
+    if (registeredQueueId) {
+      await supabase
+        .from('queues')
+        .delete()
+        .eq('id', registeredQueueId);
+      setRegisteredQueueId(null);
+    }
+    setIsDeletingOldData(false);
+    setShowEditWarning(false);
+    setStep('form');
+  };
+
+  // Kalkulasi Dashboard Pasien
   const waitingPatientsBeforeUser = queueList.filter((p) => p.queue_number < assignedQueue && p.status !== 'completed').length;
   const estimatedWaitMinutes = waitingPatientsBeforeUser * avgServiceTime;
   const estimatedCallDate = new Date(currentTime.getTime() + estimatedWaitMinutes * 60000);
@@ -159,7 +181,7 @@ export default function PatientPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden relative">
         
         {/* Header Pasien */}
         <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 p-6 text-white text-center relative">
@@ -187,7 +209,7 @@ export default function PatientPage() {
                   <Hash className="w-3.5 h-3.5 text-blue-600" /> Nomor Antrean Kamu (Otomatis)
                 </p>
                 <p className="text-[11px] text-blue-600">
-                  {queueList.filter(p => p.status === 'waiting').length} pasien menunggu di antrean
+                  {queueList.filter((p) => p.status === 'waiting').length} pasien menunggu di antrean
                 </p>
               </div>
               <div className="flex items-center gap-1 bg-white px-3.5 py-1.5 rounded-xl border border-blue-200 shadow-sm">
@@ -275,7 +297,7 @@ export default function PatientPage() {
                 </button>
               </div>
 
-              {/* Pilihan Transportasi & Durasi */}
+              {/* Pilihan Moda Transportasi & Durasi */}
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
@@ -319,11 +341,21 @@ export default function PatientPage() {
               disabled={isSubmitting}
               className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 transition active:scale-[0.98]"
             >
-              {isSubmitting ? 'Mendaftarkan Antrean...' : 'Hitung Rekomendasi Jam Berangkat'}
-              <ArrowRight className="w-4 h-4" />
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Mendaftarkan Antrean...
+                </>
+              ) : (
+                <>
+                  Hitung Rekomendasi Jam Berangkat
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </form>
         ) : (
+          /* DASHBOARD TRACKER PASIEN */
           <div className="p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
@@ -332,8 +364,8 @@ export default function PatientPage() {
                 <p className="text-xs text-blue-600 font-medium">{selectedPoli} — RS Sehat Sentosa</p>
               </div>
               <button
-                onClick={() => setStep('form')}
-                className="text-xs font-semibold text-slate-400 hover:text-blue-600 flex items-center gap-1 p-1.5 rounded-lg hover:bg-slate-100 transition"
+                onClick={() => setShowEditWarning(true)}
+                className="text-xs font-semibold text-rose-500 hover:text-rose-600 flex items-center gap-1 p-1.5 rounded-lg hover:bg-rose-50 transition border border-rose-100"
               >
                 <ChevronLeft className="w-3.5 h-3.5" /> Ubah Data
               </button>
@@ -380,12 +412,57 @@ export default function PatientPage() {
                   {waitingPatientsBeforeUser > 0 ? formatTime(departureDate) : 'Segera Menuju Ruangan'}
                 </div>
                 <p className="text-[10px] text-blue-100/90 italic">
-                  *Tersinkronisasi otomatis dengan panggilan loket dokter.
+                  *Tersinkronisasi otomatis dengan panggilan loket faskes.
                 </p>
               </div>
             </div>
           </div>
         )}
+
+        {/* MODAL PERINGATAN UBAH DATA (MENCEGAH DUPLIKASI) */}
+        {showEditWarning && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 text-center">
+              <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-rose-100">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              
+              <h3 className="text-base font-bold text-slate-800 mb-1">
+                Peringatan Perubahan Data
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed mb-5">
+                Mengubah data akan <span className="font-bold text-rose-600">membatalkan antrean #{assignedQueue}</span> dan menghapus pendaftaran Anda sebelumnya dari server untuk mencegah duplikasi. Anda akan mendapatkan nomor antrean baru setelah mendaftar ulang.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={isDeletingOldData}
+                  onClick={() => setShowEditWarning(false)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingOldData}
+                  onClick={handleConfirmEdit}
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-1.5"
+                >
+                  {isDeletingOldData ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Menghapus...
+                    </>
+                  ) : (
+                    'Ya, Ubah Data'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
