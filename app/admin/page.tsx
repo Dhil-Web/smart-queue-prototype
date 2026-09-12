@@ -18,9 +18,11 @@ import {
   AlertCircle, 
   RotateCcw, 
   Stethoscope,
-  XCircle
+  XCircle,
+  Filter
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { POLI_LIST } from '@/lib/constants';
 
 interface PatientQueue {
   id: number;
@@ -34,31 +36,18 @@ interface PatientQueue {
   created_at: string;
 }
 
-const POLI_OPTIONS = [
-  'Poli Umum',
-  'Poli Gigi & Mulut',
-  'Poli Spesialis Anak (Pediatri)',
-  'Poli Spesialis Penyakit Dalam (Internis)',
-  'Poli Spesialis Jantung & Pembuluh Darah',
-  'Poli Spesialis Mata',
-  'Poli Spesialis THT',
-  'Poli Spesialis Kulit & Kelamin',
-  'Poli Spesialis Saraf (Neurologi)',
-  'Poli Spesialis Bedah Umum',
-  'Poli Spesialis Kandungan & Kebidanan (Obgyn)'
-];
-
 export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [loginError, setLoginError] = useState('');
 
   const [queueList, setQueueList] = useState<PatientQueue[]>([]);
+  const [selectedFilterPoli, setSelectedFilterPoli] = useState<string>('Semua Poli');
   const [loading, setLoading] = useState(true);
 
   // Form Tambah Pasien Manual
   const [adminName, setAdminName] = useState('');
-  const [adminPoli, setAdminPoli] = useState('Poli Umum');
+  const [adminPoli, setAdminPoli] = useState<string>(POLI_LIST[0]);
   const [adminLoc, setAdminLoc] = useState('Loket Pendaftaran RS');
   const [showAddModal, setShowAddModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -106,14 +95,25 @@ export default function AdminDashboardPage() {
     };
   }, [isAuthenticated]);
 
-  const activePatient = queueList.find((p) => p.status === 'in-progress');
-  const currentQueueNum = activePatient 
-    ? activePatient.queue_number 
-    : (queueList.find((p) => p.status === 'waiting')?.queue_number || 0);
+  // Antrean yang difilter di tampilan tabel
+  const filteredQueues = selectedFilterPoli === 'Semua Poli'
+    ? queueList
+    : queueList.filter((p) => p.poli === selectedFilterPoli);
 
-  const handleCallPatient = async (id: number) => {
-    if (activePatient) {
-      await supabase.from('queues').update({ status: 'completed' }).eq('id', activePatient.id);
+  // Cari pasien aktif khusus poli tertentu
+  const getActiveQueueNum = (poli: string) => {
+    const list = queueList.filter((p) => p.poli === poli);
+    const active = list.find((p) => p.status === 'in-progress');
+    return active ? active.queue_number : (list.find((p) => p.status === 'waiting')?.queue_number || '-');
+  };
+
+  // Panggil pasien (otomatis selesaikan pasien aktif lain di poli yang sama saja)
+  const handleCallPatient = async (id: number, patientPoli: string) => {
+    const currentlyActiveInPoli = queueList.find(
+      (p) => p.poli === patientPoli && p.status === 'in-progress'
+    );
+    if (currentlyActiveInPoli) {
+      await supabase.from('queues').update({ status: 'completed' }).eq('id', currentlyActiveInPoli.id);
     }
     await supabase.from('queues').update({ status: 'in-progress' }).eq('id', id);
   };
@@ -122,10 +122,17 @@ export default function AdminDashboardPage() {
     await supabase.from('queues').update({ status: 'completed' }).eq('id', id);
   };
 
+  // Mengalihkan poli pasien ke poli lain dengan nomor antrean urut baru di poli tujuan
   const handleUpdatePoli = async (id: number, newPoli: string) => {
+    // Ambil antrean terbesar di poli tujuan
+    const targetPoliQueues = queueList.filter((p) => p.poli === newPoli);
+    const nextNumInTarget = targetPoliQueues.length > 0
+      ? Math.max(...targetPoliQueues.map((p) => p.queue_number)) + 1
+      : 1;
+
     const { error } = await supabase
       .from('queues')
-      .update({ poli: newPoli })
+      .update({ poli: newPoli, queue_number: nextNumInTarget })
       .eq('id', id);
 
     if (error) {
@@ -133,14 +140,17 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // Tambah pasien loket manual dengan auto-increment per poli
   const handleAdminAddPatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminName.trim()) return;
 
-    const maxQueue = queueList.reduce((max, p) => p.queue_number > max ? p.queue_number : max, 0);
+    const poliQueues = queueList.filter((p) => p.poli === adminPoli);
+    const maxQueueInPoli = poliQueues.reduce((max, p) => p.queue_number > max ? p.queue_number : max, 0);
+
     await supabase.from('queues').insert([
       {
-        queue_number: maxQueue + 1,
+        queue_number: maxQueueInPoli + 1,
         name: adminName,
         poli: adminPoli,
         location: adminLoc,
@@ -154,17 +164,29 @@ export default function AdminDashboardPage() {
     setShowAddModal(false);
   };
 
+  // Reset antrean (bisa pilih reset poli yang sedang difilter atau semua poli)
   const handleResetQueue = async () => {
-    const confirmReset = window.confirm(
-      'Apakah Anda yakin ingin mereset seluruh antrean? Semua data antrean saat ini akan dihapus dan antrean berikutnya kembali dari #1.'
-    );
+    const isFiltering = selectedFilterPoli !== 'Semua Poli';
+    const confirmMessage = isFiltering
+      ? `Yakin ingin mereset antrean khusus "${selectedFilterPoli}"? Antrean poli ini akan kembali mulai dari #1.`
+      : 'Yakin ingin mereset SEMUA antrean seluruh poli? Seluruh data akan dibersihkan.';
+
+    const confirmReset = window.confirm(confirmMessage);
     if (!confirmReset) return;
 
     setIsResetting(true);
-    const { error } = await supabase.from('queues').delete().neq('id', 0);
+
+    let query = supabase.from('queues').delete();
+    if (isFiltering) {
+      query = query.eq('poli', selectedFilterPoli);
+    } else {
+      query = query.neq('id', 0);
+    }
+
+    const { error } = await query;
 
     if (!error) {
-      setQueueList([]);
+      fetchQueues();
     } else {
       alert('Gagal mereset antrean: ' + error.message);
     }
@@ -222,17 +244,13 @@ export default function AdminDashboardPage() {
           <div>
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider mb-1">
               <ShieldCheck className="w-4 h-4" />
-              Loket Resepsionis & Dokter (Triase Spesialis)
+              Multi-Poli Hospital Console
             </div>
             <h1 className="text-2xl font-bold">Manajemen Antrean Presisi</h1>
-            <p className="text-xs text-slate-300">RS Sehat Sentosa — Poliklinik Terintegrasi AI</p>
+            <p className="text-xs text-slate-300">RS Sehat Sentosa — Triase & Antrean Mandiri Per Poli</p>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="bg-white/10 px-4 py-2 rounded-2xl backdrop-blur-sm text-center border border-white/10">
-              <span className="text-[10px] text-slate-300 block">Antrean Berjalan</span>
-              <span className="text-xl font-black text-amber-400">#{currentQueueNum || '-'}</span>
-            </div>
             <button
               onClick={() => setShowAddModal(true)}
               className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md"
@@ -243,10 +261,10 @@ export default function AdminDashboardPage() {
               onClick={handleResetQueue}
               disabled={isResetting}
               className="px-3.5 py-2.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition border border-rose-500/30"
-              title="Reset seluruh antrean"
+              title={selectedFilterPoli === 'Semua Poli' ? 'Reset Semua Antrean' : `Reset Antrean ${selectedFilterPoli}`}
             >
               <RotateCcw className="w-4 h-4" />
-              {isResetting ? 'Mereset...' : 'Reset Antrean'}
+              {isResetting ? 'Mereset...' : selectedFilterPoli === 'Semua Poli' ? 'Reset Semua' : `Reset ${selectedFilterPoli}`}
             </button>
             <button
               onClick={() => setIsAuthenticated(false)}
@@ -258,6 +276,38 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
+        {/* Filter Poli Tab Bar */}
+        <div className="bg-slate-900/95 border-b border-slate-800 px-6 py-3 flex items-center gap-2 overflow-x-auto text-xs text-white">
+          <Filter className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 mr-1" />
+          <span className="font-bold text-slate-400 mr-2 flex-shrink-0">Filter Poli:</span>
+          <button
+            onClick={() => setSelectedFilterPoli('Semua Poli')}
+            className={`px-3 py-1.5 rounded-lg font-semibold flex-shrink-0 transition ${
+              selectedFilterPoli === 'Semua Poli' 
+                ? 'bg-indigo-600 text-white shadow' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            Semua Poli ({queueList.length})
+          </button>
+          {POLI_LIST.map((p) => {
+            const count = queueList.filter((q) => q.poli === p && q.status !== 'cancelled').length;
+            return (
+              <button
+                key={p}
+                onClick={() => setSelectedFilterPoli(p)}
+                className={`px-3 py-1.5 rounded-lg font-semibold flex-shrink-0 transition ${
+                  selectedFilterPoli === p 
+                    ? 'bg-indigo-600 text-white shadow' 
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                {p} {count > 0 ? `(${count})` : ''}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Statistik Ringkas */}
         <div className="grid grid-cols-3 gap-4 p-6 border-b border-slate-100 bg-slate-50/50">
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
@@ -267,7 +317,7 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Sedang Diperiksa</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter((p) => p.status === 'in-progress').length} Pasien
+                {filteredQueues.filter((p) => p.status === 'in-progress').length} Pasien
               </span>
             </div>
           </div>
@@ -279,7 +329,7 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Menunggu / OTW</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter((p) => p.status === 'waiting').length} Pasien
+                {filteredQueues.filter((p) => p.status === 'waiting').length} Pasien
               </span>
             </div>
           </div>
@@ -291,7 +341,7 @@ export default function AdminDashboardPage() {
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Selesai Berobat</span>
               <span className="text-lg font-bold text-slate-800">
-                {queueList.filter((p) => p.status === 'completed').length} Pasien
+                {filteredQueues.filter((p) => p.status === 'completed').length} Pasien
               </span>
             </div>
           </div>
@@ -302,34 +352,34 @@ export default function AdminDashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
               <Users className="w-4 h-4 text-indigo-600" />
-              Daftar Antrean & Kontrol Alokasi Poli
+              Daftar Antrean ({selectedFilterPoli})
             </h2>
             <span className="text-[11px] text-slate-400 italic">
-              *Antrean &quot;Ubah Data&quot; otomatis terkunci dan tidak dapat diubah
+              *Setiap poli memiliki nomor antrean 1..N yang terpisah
             </span>
           </div>
 
           {loading ? (
             <p className="text-xs text-slate-400 py-6 text-center">Sinkronisasi data Supabase...</p>
-          ) : queueList.length === 0 ? (
+          ) : filteredQueues.length === 0 ? (
             <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-2xl">
-              Belum ada antrean terdaftar. Antrean berikutnya akan dimulai dari nomor #1.
+              Belum ada antrean untuk {selectedFilterPoli}. Antrean berikutnya dimulai dari #1.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
-                    <th className="py-3 px-3">No. Antrean</th>
+                    <th className="py-3 px-3">No. Antrean Poli</th>
                     <th className="py-3 px-3">Nama Pasien</th>
-                    <th className="py-3 px-3">Poli Tujuan</th>
+                    <th className="py-3 px-3">Poli Tujuan (Bisa Dialihkan)</th>
                     <th className="py-3 px-3">Estimasi Jarak & Titik Mulai</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-3 text-right">Aksi Loket</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {queueList.map((item) => {
+                  {filteredQueues.map((item) => {
                     const isCancelled = item.status === 'cancelled';
 
                     return (
@@ -341,7 +391,7 @@ export default function AdminDashboardPage() {
                           <span className={`text-sm font-extrabold px-2.5 py-1 rounded-lg border ${
                             isCancelled 
                               ? 'text-slate-400 bg-slate-100 border-slate-200 line-through' 
-                              : 'text-slate-800 bg-slate-100 border-slate-200'
+                              : 'text-blue-700 bg-blue-50 border-blue-200'
                           }`}>
                             #{item.queue_number}
                           </span>
@@ -367,7 +417,7 @@ export default function AdminDashboardPage() {
                                 onChange={(e) => handleUpdatePoli(item.id, e.target.value)}
                                 className="bg-slate-50 border border-slate-200 hover:border-indigo-400 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
                               >
-                                {POLI_OPTIONS.map((poliName) => (
+                                {POLI_LIST.map((poliName) => (
                                   <option key={poliName} value={poliName}>
                                     {poliName}
                                   </option>
@@ -415,7 +465,7 @@ export default function AdminDashboardPage() {
                             <span className="text-slate-400 text-[11px] italic">Dibatalkan (Ubah Data)</span>
                           ) : item.status === 'waiting' ? (
                             <button
-                              onClick={() => handleCallPatient(item.id)}
+                              onClick={() => handleCallPatient(item.id, item.poli)}
                               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition inline-flex items-center gap-1 text-[11px]"
                             >
                               <Play className="w-3 h-3" /> Panggil
@@ -446,9 +496,24 @@ export default function AdminDashboardPage() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100">
             <h2 className="text-base font-bold text-slate-800 mb-1">Tambah Pasien Loket Manual</h2>
-            <p className="text-xs text-slate-500 mb-4">Pilih poli umum atau spesialis sesuai indikasi medis</p>
+            <p className="text-xs text-slate-500 mb-4">Pilih poli tujuan untuk alokasi nomor antrean</p>
 
             <form onSubmit={handleAdminAddPatient} className="space-y-3">
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 block mb-1">Poli Tujuan</label>
+                <select
+                  value={adminPoli}
+                  onChange={(e) => setAdminPoli(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
+                >
+                  {POLI_LIST.map((poliName) => (
+                    <option key={poliName} value={poliName}>
+                      {poliName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="text-[11px] font-bold text-slate-600 block mb-1">Nama Pasien</label>
                 <input
@@ -459,21 +524,6 @@ export default function AdminDashboardPage() {
                   placeholder="Nama Pasien"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1">Poli Tujuan</label>
-                <select
-                  value={adminPoli}
-                  onChange={(e) => setAdminPoli(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  {POLI_OPTIONS.map((poliName) => (
-                    <option key={poliName} value={poliName}>
-                      {poliName}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               <div className="flex gap-2 pt-2">

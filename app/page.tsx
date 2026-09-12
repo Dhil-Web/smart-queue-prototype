@@ -10,14 +10,15 @@ import {
   Sparkles, 
   ChevronLeft, 
   AlertCircle, 
-  Clock, 
   ArrowRight, 
   Hash, 
   AlertTriangle, 
   Loader2,
-  Info
+  Info,
+  Stethoscope
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { POLI_LIST } from '@/lib/constants';
 
 interface PatientQueue {
   id: number;
@@ -39,7 +40,7 @@ export default function PatientPage() {
   // State Form Pasien
   const [registeredQueueId, setRegisteredQueueId] = useState<number | null>(null);
   const [patientName, setPatientName] = useState('');
-  const [selectedPoli, setSelectedPoli] = useState('');
+  const [selectedPoli, setSelectedPoli] = useState<string>('Poli Umum');
   const [locationName, setLocationName] = useState('');
   const [travelMode, setTravelMode] = useState<'motor' | 'mobil'>('motor');
   const [travelTime, setTravelTime] = useState<number | ''>('');
@@ -55,11 +56,10 @@ export default function PatientPage() {
   const avgServiceTime = 5;
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Ref untuk melacak ID aktif saat realtime trigger
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = registeredQueueId;
 
-  // 1. Baca Sesi Lokal saat pertama kali dibuka / di-refresh
+  // 1. Baca Sesi Lokal saat buka/refresh
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -69,7 +69,7 @@ export default function PatientPage() {
           setRegisteredQueueId(parsed.id);
           activeIdRef.current = parsed.id;
           setPatientName(parsed.name || '');
-          setSelectedPoli(parsed.poli || '');
+          setSelectedPoli(parsed.poli || 'Poli Umum');
           setLocationName(parsed.location || '');
           setTravelMode(parsed.travel_mode || 'motor');
           setTravelTime(parsed.travel_time || 0);
@@ -82,7 +82,7 @@ export default function PatientPage() {
     }
   }, []);
 
-  // 2. Fetch Data dari Supabase & Cek Validitas Antrean
+  // 2. Fetch Data Supabase
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -97,7 +97,6 @@ export default function PatientPage() {
       if (currentActiveId) {
         const currentData = list.find((p) => p.id === currentActiveId);
 
-        // Jika antrean sudah di-reset oleh admin (data tidak ada di DB) atau berstatus cancelled
         if (!currentData || currentData.status === 'cancelled') {
           localStorage.removeItem(STORAGE_KEY);
           setRegisteredQueueId(null);
@@ -107,12 +106,17 @@ export default function PatientPage() {
             setResetNotice(true);
             setTimeout(() => setResetNotice(false), 6000);
           }
+        } else {
+          // Sinkron jika admin mengalihkan poli pasien secara live
+          if (currentData.poli !== selectedPoli) {
+            setSelectedPoli(currentData.poli);
+          }
         }
       }
     }
   };
 
-  // 3. Supabase Realtime Listener (Termasuk Event DELETE Saat Admin Reset)
+  // 3. Realtime Listener
   useEffect(() => {
     fetchQueues();
 
@@ -122,10 +126,8 @@ export default function PatientPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'queues' },
         (payload) => {
-          // Jika event adalah DELETE (misal reset admin)
           if (payload.eventType === 'DELETE') {
             const currentActiveId = activeIdRef.current;
-            // Jika data yang dihapus adalah ID antrean pasien ini, atau jika ID kosong (semua direset)
             if (!payload.old || payload.old.id === currentActiveId || !currentActiveId) {
               localStorage.removeItem(STORAGE_KEY);
               setRegisteredQueueId(null);
@@ -148,14 +150,19 @@ export default function PatientPage() {
     };
   }, []);
 
-  const nextQueueNumber = queueList.length > 0 
-    ? Math.max(...queueList.map((p) => p.queue_number)) + 1 
+  // Filter antrean khusus poli yang sedang dipilih di form
+  const currentPoliQueues = queueList.filter((p) => p.poli === selectedPoli);
+
+  // Nomor antrean berikutnya khusus poli terpilih (Auto-Increment Per Poli)
+  const nextQueueNumber = currentPoliQueues.length > 0 
+    ? Math.max(...currentPoliQueues.map((p) => p.queue_number)) + 1 
     : 1;
 
-  const activePatient = queueList.find((p) => p.status === 'in-progress');
-  const currentQueueNum = activePatient 
-    ? activePatient.queue_number 
-    : (queueList.find((p) => p.status === 'waiting')?.queue_number || 0);
+  // Antrean aktif di poli yang dipilih
+  const activePoliPatient = currentPoliQueues.find((p) => p.status === 'in-progress');
+  const currentPoliQueueNum = activePoliPatient 
+    ? activePoliPatient.queue_number 
+    : (currentPoliQueues.find((p) => p.status === 'waiting')?.queue_number || 0);
 
   const handleLocationPreset = (preset: 'dekat' | 'sedang' | 'jauh') => {
     if (preset === 'dekat') {
@@ -181,13 +188,17 @@ export default function PatientPage() {
       return;
     }
 
-    const { data: latestData } = await supabase
+    // Ambil antrean terakhir KHUSUS poli yang dipilih
+    const { data: latestPoliData } = await supabase
       .from('queues')
       .select('queue_number')
+      .eq('poli', selectedPoli)
       .order('queue_number', { ascending: false })
       .limit(1);
 
-    const latestNumber = (latestData && latestData.length > 0) ? latestData[0].queue_number + 1 : 1;
+    const latestNumber = (latestPoliData && latestPoliData.length > 0) 
+      ? latestPoliData[0].queue_number + 1 
+      : 1;
 
     const newPatient = {
       queue_number: latestNumber,
@@ -241,7 +252,8 @@ export default function PatientPage() {
     setStep('form');
   };
 
-  const waitingPatientsBeforeUser = queueList.filter(
+  // Antrean di depan hanya dihitung dari poli yang sama
+  const waitingPatientsBeforeUser = currentPoliQueues.filter(
     (p) => p.queue_number < assignedQueue && p.status === 'waiting'
   ).length;
   
@@ -260,17 +272,16 @@ export default function PatientPage() {
         <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 p-6 text-white text-center relative">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
             <Sparkles className="w-3.5 h-3.5 text-blue-200" />
-            AI Dynamic Queue Portal
+            Smart Multi-Poli Queue Portal
           </div>
           <h1 className="text-2xl font-bold tracking-tight">SmartArrive AI</h1>
-          <p className="text-xs text-blue-100 mt-0.5">Prediksi Kedatangan Presisi Tanpa Antre di RS</p>
+          <p className="text-xs text-blue-100 mt-0.5">Antrean Presisi Mandiri Berdasarkan Poliklinik</p>
         </div>
 
-        {/* Notifikasi Banner jika Antrean baru saja di-reset Petugas */}
         {resetNotice && (
           <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
             <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span>Sesi antrean telah direset oleh petugas loket RS. Silakan daftar kembali.</span>
+            <span>Sesi antrean poli telah direset oleh petugas. Silakan daftar kembali.</span>
           </div>
         )}
 
@@ -283,14 +294,36 @@ export default function PatientPage() {
               </div>
             )}
 
-            {/* Nomor Antrean Otomatis */}
-            <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-100 flex items-center justify-between">
+            {/* Pilihan Poliklinik Utama (Di atas agar nomor urut langsung menyesuaikan) */}
+            <div>
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+                Pilih Poliklinik Tujuan *
+              </label>
+              <div className="relative">
+                <Building2 className="w-4 h-4 text-blue-600 absolute left-3.5 top-3.5 pointer-events-none" />
+                <select
+                  required
+                  value={selectedPoli}
+                  onChange={(e) => setSelectedPoli(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-blue-50/40 border border-blue-200 font-semibold text-blue-950 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition appearance-none cursor-pointer"
+                >
+                  {POLI_LIST.map((poli) => (
+                    <option key={poli} value={poli}>
+                      {poli}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Nomor Antrean Otomatis Sesuai Poli Terpilih */}
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-blue-900 flex items-center gap-1">
-                  <Hash className="w-3.5 h-3.5 text-blue-600" /> Nomor Antrean Kamu (Otomatis)
+                <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                  <Hash className="w-3.5 h-3.5 text-blue-600" /> Antrean {selectedPoli}
                 </p>
-                <p className="text-[11px] text-blue-600">
-                  {queueList.filter((p) => p.status === 'waiting').length} pasien menunggu di antrean
+                <p className="text-[11px] text-slate-500">
+                  {currentPoliQueues.filter((p) => p.status === 'waiting').length} pasien menunggu di poli ini
                 </p>
               </div>
               <div className="flex items-center gap-1 bg-white px-3.5 py-1.5 rounded-xl border border-blue-200 shadow-sm">
@@ -299,41 +332,21 @@ export default function PatientPage() {
               </div>
             </div>
 
-            {/* Identitas Pasien */}
+            {/* Nama Pasien */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
-                Identitas Pasien *
+                Nama Lengkap Pasien *
               </label>
-              <div className="space-y-2">
-                <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                  <input
-                    type="text"
-                    required
-                    value={patientName}
-                    onChange={(e) => setPatientName(e.target.value)}
-                    placeholder="Masukkan nama lengkap pasien"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-                  />
-                </div>
-
-                <div className="relative">
-                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                  <select
-                    required
-                    value={selectedPoli}
-                    onChange={(e) => setSelectedPoli(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition appearance-none cursor-pointer text-slate-700"
-                  >
-                    <option value="" disabled>-- Pilih Poliklinik Tujuan --</option>
-                    <option value="Poli Umum">Poli Umum — dr. Hendra (Lt. 1)</option>
-                    <option value="Poli Gigi & Mulut">Poli Gigi & Mulut — drg. Sarah (Lt. 2)</option>
-                    <option value="Poli Spesialis Anak (Pediatri)">Poli Spesialis Anak (Pediatri)</option>
-                    <option value="Poli Spesialis Penyakit Dalam (Internis)">Poli Spesialis Penyakit Dalam (Internis)</option>
-                    <option value="Poli Spesialis Jantung & Pembuluh Darah">Poli Spesialis Jantung & Pembuluh Darah</option>
-                    <option value="Poli Spesialis Bedah Umum">Poli Spesialis Bedah Umum</option>
-                  </select>
-                </div>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                <input
+                  type="text"
+                  required
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  placeholder="Masukkan nama lengkap pasien"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                />
               </div>
             </div>
 
@@ -444,7 +457,10 @@ export default function PatientPage() {
               <div>
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Pasien Terdaftar</span>
                 <h2 className="text-base font-bold text-slate-800">{patientName}</h2>
-                <p className="text-xs text-blue-600 font-medium">{selectedPoli} — RS Sehat Sentosa</p>
+                <div className="flex items-center gap-1 text-xs text-blue-600 font-semibold mt-0.5">
+                  <Stethoscope className="w-3.5 h-3.5" />
+                  {selectedPoli}
+                </div>
               </div>
               <button
                 onClick={() => setShowEditWarning(true)}
@@ -456,8 +472,12 @@ export default function PatientPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 text-center">
-                <span className="text-[11px] font-medium text-slate-500 block mb-1">Antrean Saat Ini</span>
-                <span className="text-3xl font-extrabold text-slate-800">#{currentQueueNum || '-'}</span>
+                <span className="text-[11px] font-medium text-slate-500 block mb-1">
+                  Panggilan {selectedPoli}
+                </span>
+                <span className="text-3xl font-extrabold text-slate-800">
+                  {currentPoliQueueNum ? `#${currentPoliQueueNum}` : '-'}
+                </span>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3.5 text-center">
                 <span className="text-[11px] font-medium text-blue-600 block mb-1">Nomor Kamu</span>
@@ -471,7 +491,7 @@ export default function PatientPage() {
                 <span className="font-semibold text-slate-800 truncate max-w-[180px]">{locationName}</span>
               </div>
               <div className="flex justify-between items-center text-slate-600">
-                <span>Sisa antrean di depan:</span>
+                <span>Antrean di depan ({selectedPoli}):</span>
                 <span className="font-bold text-slate-800 text-sm">{waitingPatientsBeforeUser} pasien</span>
               </div>
               <div className="flex justify-between items-center text-slate-600">
@@ -495,14 +515,14 @@ export default function PatientPage() {
                   {waitingPatientsBeforeUser > 0 ? formatTime(departureDate) : 'Segera Menuju Ruangan'}
                 </div>
                 <p className="text-[10px] text-blue-100/90 italic">
-                  *Tersinkronisasi otomatis dengan panggilan loket faskes.
+                  *Tersinkronisasi khusus antrean dokter {selectedPoli}.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* MODAL PERINGATAN UBAH DATA */}
+        {/* Modal Peringatan Ubah Data */}
         {showEditWarning && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 text-center">
@@ -514,7 +534,7 @@ export default function PatientPage() {
                 Peringatan Perubahan Data
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed mb-5">
-                Mengubah data akan menandai antrean <span className="font-bold text-rose-600">#{assignedQueue}</span> sebagai batal (*Ubah Data*). Anda perlu mengambil nomor antrean baru setelah memperbarui formulir.
+                Mengubah data akan membatalkan antrean <span className="font-bold text-rose-600">#{assignedQueue} ({selectedPoli})</span>. Anda perlu mendaftar antrean baru setelahnya.
               </p>
 
               <div className="flex gap-2">
