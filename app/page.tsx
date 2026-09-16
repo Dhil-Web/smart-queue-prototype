@@ -36,7 +36,7 @@ const RouteMap = dynamic(() => import('@/components/RouteMap'), {
 });
 
 // Koordinat Resmi RSUB Malang (Soekarno-Hatta)
-const RSUB_COORDS = { lat: -7.9372, lng: 112.6163 };
+const RSUB_COORDS = { lat: -7.9412275, lng: 112.6215363 };
 
 interface PatientQueue {
   id: number;
