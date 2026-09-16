@@ -27,7 +27,7 @@ const Polyline = dynamic(
 );
 
 // Koordinat gerbang masuk RSUB (titik X Jalan Soekarno-Hatta)
-const RSUB_COORDS = { lat: -7.940263, lng: 112.617468 };
+const RSUB_COORDS = { lat: -7.94132, lng: 112.61715 };
 
 export default function Home() {
   const [currentQueue, setCurrentQueue] = useState(12);
