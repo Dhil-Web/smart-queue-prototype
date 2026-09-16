@@ -14,7 +14,8 @@ import {
   AlertTriangle, 
   Loader2, 
   Info, 
-  Stethoscope 
+  Stethoscope,
+  CheckCircle2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST } from '@/lib/constants';
@@ -46,6 +47,7 @@ export default function PatientPage() {
   const [assignedQueue, setAssignedQueue] = useState<number>(1);
   const [errorMessage, setErrorMessage] = useState('');
   const [resetNotice, setResetNotice] = useState(false);
+  const [completedNotice, setCompletedNotice] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // State Modal Peringatan Ubah Data
@@ -81,7 +83,7 @@ export default function PatientPage() {
     }
   }, []);
 
-  // 2. Fetch Data Supabase
+  // 2. Fetch Data Supabase & Cek Status Selesai / Dibatalkan
   const fetchQueues = async () => {
     const { data, error } = await supabase
       .from('queues')
@@ -96,19 +98,40 @@ export default function PatientPage() {
       if (currentActiveId) {
         const currentData = list.find((p) => p.id === currentActiveId);
 
-        if (!currentData || currentData.status === 'cancelled') {
+        // Kasus 1: Antrean dihapus/reset oleh admin
+        if (!currentData) {
           localStorage.removeItem(STORAGE_KEY);
           setRegisteredQueueId(null);
           activeIdRef.current = null;
           setStep('form');
-          if (!currentData) {
-            setResetNotice(true);
-            setTimeout(() => setResetNotice(false), 6000);
-          }
-        } else {
-          if (currentData.poli !== selectedPoli) {
-            setSelectedPoli(currentData.poli);
-          }
+          setResetNotice(true);
+          setTimeout(() => setResetNotice(false), 6000);
+          return;
+        }
+
+        // Kasus 2: Pasien telah diselesaikan pelayanannya oleh admin/dokter
+        if (currentData.status === 'completed') {
+          localStorage.removeItem(STORAGE_KEY);
+          setRegisteredQueueId(null);
+          activeIdRef.current = null;
+          setStep('form');
+          setCompletedNotice(true);
+          setTimeout(() => setCompletedNotice(false), 7000);
+          return;
+        }
+
+        // Kasus 3: Pasien berstatus cancelled (Ubah data)
+        if (currentData.status === 'cancelled') {
+          localStorage.removeItem(STORAGE_KEY);
+          setRegisteredQueueId(null);
+          activeIdRef.current = null;
+          setStep('form');
+          return;
+        }
+
+        // Kasus 4: Poli dialihkan secara langsung oleh admin
+        if (currentData.poli !== selectedPoli) {
+          setSelectedPoli(currentData.poli);
         }
       }
     }
@@ -124,8 +147,10 @@ export default function PatientPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'queues' },
         (payload) => {
+          const currentActiveId = activeIdRef.current;
+
+          // Tangani Event DELETE
           if (payload.eventType === 'DELETE') {
-            const currentActiveId = activeIdRef.current;
             if (!payload.old || payload.old.id === currentActiveId || !currentActiveId) {
               localStorage.removeItem(STORAGE_KEY);
               setRegisteredQueueId(null);
@@ -135,6 +160,20 @@ export default function PatientPage() {
               setTimeout(() => setResetNotice(false), 6000);
             }
           }
+
+          // Tangani Event UPDATE (Termasuk saat admin ubah status jadi 'completed')
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            const updatedRow = payload.new as PatientQueue;
+            if (updatedRow.id === currentActiveId && updatedRow.status === 'completed') {
+              localStorage.removeItem(STORAGE_KEY);
+              setRegisteredQueueId(null);
+              activeIdRef.current = null;
+              setStep('form');
+              setCompletedNotice(true);
+              setTimeout(() => setCompletedNotice(false), 7000);
+            }
+          }
+
           fetchQueues();
         }
       )
@@ -269,10 +308,24 @@ export default function PatientPage() {
           <h1 className="text-2xl font-bold tracking-tight">Daftar Antrian</h1>
         </div>
 
+        {/* Notifikasi Sesi Di-reset Admin */}
         {resetNotice && (
-          <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
+          <div className="mx-6 mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
             <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span>Sesi antrean poli telah direset oleh petugas. Silakan daftar kembali.</span>
+            <span>Sesi antrean poli telah direset oleh petugas. Silakan daftar kembali jika dibutuhkan.</span>
+          </div>
+        )}
+
+        {/* Notifikasi Pelayanan Selesai dari Petugas */}
+        {completedNotice && (
+          <div className="mx-6 mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <div>
+              <p className="font-bold">Pelayanan Selesai!</p>
+              <p className="text-[11px] text-emerald-700 mt-0.5">
+                Pemeriksaan Anda telah selesai. Terima kasih telah memanfaatkan layanan antrean terintegrasi.
+              </p>
+            </div>
           </div>
         )}
 
