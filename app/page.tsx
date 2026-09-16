@@ -20,7 +20,7 @@ import {
   Edit3
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { POLI_LIST } from '@/lib/constants';
+import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
 
 interface PatientQueue {
   id: number;
@@ -42,7 +42,7 @@ export default function PatientPage() {
   // State Form Pasien
   const [registeredQueueId, setRegisteredQueueId] = useState<number | null>(null);
   const [patientName, setPatientName] = useState('');
-  const [selectedPoli, setSelectedPoli] = useState<string>('Poli Umum');
+  const [selectedPoli, setSelectedPoli] = useState<string>(POLI_LIST[0]);
   
   // Opsi Input Lokasi: 'auto' | 'manual'
   const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
@@ -74,15 +74,12 @@ export default function PatientPage() {
   const calculateDurationFromKm = (km: number, mode: 'motor' | 'mobil') => {
     if (km <= 0) return 3;
     if (mode === 'motor') {
-      // Kecepatan rata-rata motor kota ~25 km/h + 2 menit traffic
       return Math.max(3, Math.round((km / 25) * 60 + 2));
     } else {
-      // Kecepatan rata-rata mobil kota ~18 km/h + 4 menit traffic & parkir
       return Math.max(5, Math.round((km / 18) * 60 + 4));
     }
   };
 
-  // Re-kalkulasi durasi saat jarak manual atau moda transportasi berubah
   useEffect(() => {
     if (locationMode === 'manual') {
       const dist = distanceType === 'less_1' ? 0.8 : (typeof customDistanceKm === 'number' ? customDistanceKm : 0);
@@ -92,7 +89,6 @@ export default function PatientPage() {
     }
   }, [distanceType, customDistanceKm, travelMode, locationMode]);
 
-  // Baca Sesi Lokal
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -102,7 +98,7 @@ export default function PatientPage() {
           setRegisteredQueueId(parsed.id);
           activeIdRef.current = parsed.id;
           setPatientName(parsed.name || '');
-          setSelectedPoli(parsed.poli || 'Poli Umum');
+          setSelectedPoli(parsed.poli || POLI_LIST[0]);
           setLocationName(parsed.location || '');
           setTravelMode(parsed.travel_mode || 'motor');
           setTravelTime(parsed.travel_time || 0);
@@ -222,16 +218,15 @@ export default function PatientPage() {
     ? activePoliPatient.queue_number 
     : (currentPoliQueues.find((p) => p.status === 'waiting')?.queue_number || 0);
 
-  // Preset Otomatis
   const handleLocationPreset = (preset: 'dekat' | 'sedang' | 'jauh') => {
     if (preset === 'dekat') {
-      setLocationName('Area Sekitar RS (±2 km)');
+      setLocationName('Area Sekitar Suhat / RSUB (±2 km)');
       setTravelTime(calculateDurationFromKm(2, travelMode));
     } else if (preset === 'sedang') {
-      setLocationName('Area Dalam Kota (±5 km)');
+      setLocationName('Area Kampus UB / Dinoyo (±5 km)');
       setTravelTime(calculateDurationFromKm(5, travelMode));
     } else {
-      setLocationName('Area Pinggiran / Luar Kota (±10 km)');
+      setLocationName('Area Sawojajar / Luar Kota Malang (±10 km)');
       setTravelTime(calculateDurationFromKm(10, travelMode));
     }
   };
@@ -258,7 +253,6 @@ export default function PatientPage() {
       ? latestPoliData[0].queue_number + 1 
       : 1;
 
-    // Label titik lokasi yang disimpan
     const finalLocationLabel = locationMode === 'manual'
       ? `${locationName} (${distanceType === 'less_1' ? '<1 km' : `${customDistanceKm} km`})`
       : locationName;
@@ -330,19 +324,20 @@ export default function PatientPage() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden relative">
         
-        {/* Header Pasien */}
-        <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 p-6 text-white text-center relative">
+        {/* Header Pasien RSUB */}
+        <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-sky-700 p-6 text-white text-center relative">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
-            RS Sehat Sentosa
+            🏥 {RS_SHORT}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Daftar Antrian</h1>
+          <h1 className="text-xl font-black tracking-tight">{RS_NAME}</h1>
+          <p className="text-[11px] text-blue-100/90 mt-1">{RS_ADDRESS}</p>
         </div>
 
         {/* Notifikasi Sesi Di-reset Admin */}
         {resetNotice && (
           <div className="mx-6 mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
             <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span>Sesi antrean poli telah direset oleh petugas. Silakan daftar kembali jika dibutuhkan.</span>
+            <span>Sesi antrean poli telah direset oleh petugas RSUB. Silakan daftar kembali jika dibutuhkan.</span>
           </div>
         )}
 
@@ -353,7 +348,7 @@ export default function PatientPage() {
             <div>
               <p className="font-bold">Pelayanan Selesai!</p>
               <p className="text-[11px] text-emerald-700 mt-0.5">
-                Pemeriksaan Anda telah selesai. Terima kasih telah memanfaatkan layanan antrean terintegrasi.
+                Pemeriksaan Anda di {RS_SHORT} telah selesai. Terima kasih atas kunjungan Anda.
               </p>
             </div>
           </div>
@@ -368,10 +363,10 @@ export default function PatientPage() {
               </div>
             )}
 
-            {/* Pilihan Poliklinik */}
+            {/* Pilihan Poliklinik RSUB */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
-                Pilih Poliklinik Tujuan *
+                Pilih Poliklinik RSUB Tujuan *
               </label>
               <div className="relative">
                 <Building2 className="w-4 h-4 text-blue-600 absolute left-3.5 top-3.5 pointer-events-none" />
@@ -390,7 +385,7 @@ export default function PatientPage() {
               </div>
             </div>
 
-            {/* Nomor Antrean Otomatis */}
+            {/* Nomor Antrean Otomatis Sesuai Poli */}
             <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
@@ -424,13 +419,12 @@ export default function PatientPage() {
               </div>
             </div>
 
-            {/* Lokasi Pasien (Dua Opsi: Otomatis vs Manual) */}
+            {/* Lokasi Keberangkatan */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                  Lokasi Keberangkatan *
+                  Lokasi Keberangkatan ke RSUB *
                 </label>
-                {/* Tab Switcher */}
                 <div className="flex bg-slate-100 p-0.5 rounded-lg text-[11px] font-semibold">
                   <button
                     type="button"
@@ -443,7 +437,7 @@ export default function PatientPage() {
                       locationMode === 'auto' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'
                     }`}
                   >
-                    <Navigation className="w-3 h-3" /> Otomatis
+                    <Navigation className="w-3 h-3" /> Preset Cepat
                   </button>
                   <button
                     type="button"
@@ -458,12 +452,11 @@ export default function PatientPage() {
                       locationMode === 'manual' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'
                     }`}
                   >
-                    <Edit3 className="w-3 h-3" /> Manual
+                    <Edit3 className="w-3 h-3" /> Input Alamat
                   </button>
                 </div>
               </div>
 
-              {/* TAMPILAN OPSI 1: OTOMATIS */}
               {locationMode === 'auto' ? (
                 <div className="space-y-2">
                   <div className="relative">
@@ -473,7 +466,7 @@ export default function PatientPage() {
                       required
                       value={locationName}
                       onChange={(e) => setLocationName(e.target.value)}
-                      placeholder="Pilih salah satu preset di bawah"
+                      placeholder="Pilih salah satu preset area di bawah"
                       className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
                     />
                   </div>
@@ -484,30 +477,29 @@ export default function PatientPage() {
                       onClick={() => handleLocationPreset('dekat')}
                       className="py-1 px-2 text-[11px] font-medium rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition border border-transparent hover:border-blue-200"
                     >
-                      Dekat (~2km)
+                      Suhat (~2km)
                     </button>
                     <button
                       type="button"
                       onClick={() => handleLocationPreset('sedang')}
                       className="py-1 px-2 text-[11px] font-medium rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition border border-transparent hover:border-blue-200"
                     >
-                      Sedang (~5km)
+                      Kampus UB (~5km)
                     </button>
                     <button
                       type="button"
                       onClick={() => handleLocationPreset('jauh')}
                       className="py-1 px-2 text-[11px] font-medium rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition border border-transparent hover:border-blue-200"
                     >
-                      Jauh (~10km)
+                      Luar Kota (~10km)
                     </button>
                   </div>
                 </div>
               ) : (
-                /* TAMPILAN OPSI 2: MANUAL */
                 <div className="space-y-2.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
                   <div>
                     <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                      Alamat / Nama Tempat Pasien
+                      Alamat / Tempat Keberangkatan
                     </label>
                     <div className="relative">
                       <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
@@ -516,7 +508,7 @@ export default function PatientPage() {
                         required
                         value={locationName}
                         onChange={(e) => setLocationName(e.target.value)}
-                        placeholder="Contoh: Jl. Danau Ranau No. 12, Sawojajar"
+                        placeholder="Contoh: Kos Kerto Raharjo No. 5, Ketawanggede"
                         className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
                       />
                     </div>
@@ -524,7 +516,7 @@ export default function PatientPage() {
 
                   <div>
                     <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                      Estimasi Jarak ke Rumah Sakit
+                      Estimasi Jarak ke RSUB
                     </label>
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <button
@@ -536,7 +528,7 @@ export default function PatientPage() {
                             : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
-                        &lt; 1 km (Sangat Dekat)
+                        &lt; 1 km (Sangat Dekat RSUB)
                       </button>
                       <button
                         type="button"
@@ -547,13 +539,13 @@ export default function PatientPage() {
                             : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
-                        ≥ 1 km (Isi Jarak)
+                        ≥ 1 km (Isi Jarak Km)
                       </button>
                     </div>
 
                     {distanceType === 'custom' && (
                       <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                        <span className="text-xs text-slate-500">Jarak tempuh:</span>
+                        <span className="text-xs text-slate-500">Jarak tempuh ke RSUB:</span>
                         <input
                           type="number"
                           step="0.5"
@@ -562,7 +554,7 @@ export default function PatientPage() {
                           required
                           value={customDistanceKm}
                           onChange={(e) => setCustomDistanceKm(e.target.value ? Number(e.target.value) : '')}
-                          placeholder="Misal: 4.5"
+                          placeholder="Misal: 3.5"
                           className="w-20 font-bold text-xs text-slate-800 bg-transparent focus:outline-none text-center border-b border-blue-500"
                         />
                         <span className="text-xs font-bold text-slate-700">km</span>
@@ -572,7 +564,7 @@ export default function PatientPage() {
                 </div>
               )}
 
-              {/* Moda Transportasi & Hasil Durasi */}
+              {/* Moda Transportasi */}
               <div className="flex items-center gap-2 pt-1">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
@@ -596,7 +588,7 @@ export default function PatientPage() {
                 </div>
                 
                 <div className="w-32 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 flex flex-col items-center">
-                  <span className="text-[10px] text-slate-400">Durasi Tempuh</span>
+                  <span className="text-[10px] text-slate-400">Durasi ke RSUB</span>
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
@@ -622,7 +614,7 @@ export default function PatientPage() {
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Mendaftarkan Antrean...
+                  Mendaftarkan Antrean RSUB...
                 </>
               ) : (
                 <>
@@ -637,11 +629,11 @@ export default function PatientPage() {
           <div className="p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Pasien Terdaftar</span>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Pasien Terdaftar RSUB</span>
                 <h2 className="text-base font-bold text-slate-800">{patientName}</h2>
                 <div className="flex items-center gap-1 text-xs text-blue-600 font-semibold mt-0.5">
                   <Stethoscope className="w-3.5 h-3.5" />
-                  {selectedPoli}
+                  {selectedPoli} — {RS_SHORT}
                 </div>
               </div>
               <button
@@ -683,15 +675,15 @@ export default function PatientPage() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-slate-600">
-                <span>Waktu tempuh ({travelMode === 'motor' ? 'Motor' : 'Mobil'}):</span>
+                <span>Waktu tempuh ke RSUB ({travelMode === 'motor' ? 'Motor' : 'Mobil'}):</span>
                 <span className="font-bold text-slate-800">±{numericTravelTime} menit</span>
               </div>
             </div>
 
-            <div className="bg-blue-600 text-white p-4 rounded-2xl shadow-lg shadow-blue-600/20 text-center relative overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white p-4 rounded-2xl shadow-lg shadow-blue-700/20 text-center relative overflow-hidden">
               <div className="relative z-10">
                 <span className="text-xs uppercase tracking-wider text-blue-100 font-semibold block mb-0.5">
-                  Rekomendasi Berangkat Dari Rumah
+                  Rekomendasi Berangkat Menuju RSUB
                 </span>
                 <div className="text-3xl font-black tracking-tight my-1">
                   {waitingPatientsBeforeUser > 0 ? formatTime(departureDate) : 'Segera Menuju Ruangan'}
@@ -716,7 +708,7 @@ export default function PatientPage() {
                 Peringatan Perubahan Data
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed mb-5">
-                Mengubah data akan membatalkan antrean <span className="font-bold text-rose-600">#{assignedQueue} ({selectedPoli})</span>. Anda perlu mendaftar antrean baru setelahnya.
+                Mengubah data akan membatalkan antrean <span className="font-bold text-rose-600">#{assignedQueue} ({selectedPoli})</span> di RSUB. Anda perlu mendaftar antrean baru setelahnya.
               </p>
 
               <div className="flex gap-2">

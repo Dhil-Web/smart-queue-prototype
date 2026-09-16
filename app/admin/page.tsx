@@ -17,12 +17,12 @@ import {
   LogOut, 
   AlertCircle, 
   RotateCcw, 
-  Stethoscope,
-  XCircle,
-  Filter
+  Stethoscope, 
+  XCircle, 
+  Filter 
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { POLI_LIST } from '@/lib/constants';
+import { POLI_LIST, RS_NAME, RS_SHORT } from '@/lib/constants';
 
 interface PatientQueue {
   id: number;
@@ -48,7 +48,7 @@ export default function AdminDashboardPage() {
   // Form Tambah Pasien Manual
   const [adminName, setAdminName] = useState('');
   const [adminPoli, setAdminPoli] = useState<string>(POLI_LIST[0]);
-  const [adminLoc, setAdminLoc] = useState('Loket Pendaftaran RS');
+  const [adminLoc, setAdminLoc] = useState('Loket Pendaftaran RSUB');
   const [showAddModal, setShowAddModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -58,7 +58,7 @@ export default function AdminDashboardPage() {
       setIsAuthenticated(true);
       setLoginError('');
     } else {
-      setLoginError('PIN salah');
+      setLoginError('PIN Keamanan salah (Default: 1234)');
     }
   };
 
@@ -155,8 +155,8 @@ export default function AdminDashboardPage() {
   const handleResetQueue = async () => {
     const isFiltering = selectedFilterPoli !== 'Semua Poli';
     const confirmMessage = isFiltering
-      ? `Yakin ingin mereset antrean khusus "${selectedFilterPoli}"? Antrean poli ini akan kembali mulai dari #1.`
-      : 'Yakin ingin mereset SEMUA antrean seluruh poli? Seluruh data akan dibersihkan.';
+      ? `Yakin ingin mereset antrean khusus "${selectedFilterPoli}" di RSUB? Antrean poli ini akan kembali mulai dari #1.`
+      : 'Yakin ingin mereset SEMUA antrean seluruh poli di RSUB? Seluruh data akan dibersihkan.';
 
     const confirmReset = window.confirm(confirmMessage);
     if (!confirmReset) return;
@@ -184,11 +184,11 @@ export default function AdminDashboardPage() {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans text-slate-800">
         <div className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl border border-slate-800 text-center">
-          <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-indigo-100">
+          <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100">
             <Lock className="w-7 h-7" />
           </div>
-          <h1 className="text-xl font-bold text-slate-800">Portal Petugas Faskes</h1>
-          <p className="text-xs text-slate-500 mt-1 mb-6">RS xxxxx</p>
+          <h1 className="text-xl font-bold text-slate-800">Portal Petugas RSUB</h1>
+          <p className="text-xs text-slate-500 mt-1 mb-6">{RS_NAME} — Masukkan PIN Loket</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             {loginError && (
@@ -205,16 +205,16 @@ export default function AdminDashboardPage() {
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                placeholder="Masukkan PIN"
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="Masukkan PIN (Default: 1234)"
+                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-indigo-600/25"
+              className="w-full py-3 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-700/25"
             >
-              Login
+              Buka Konsol Loket RSUB
             </button>
           </form>
         </div>
@@ -226,21 +226,21 @@ export default function AdminDashboardPage() {
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-start p-4 md:p-8 font-sans text-slate-800">
       <div className="w-full max-w-6xl bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden">
         
-        {/* Header Admin */}
-        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* Header Admin RSUB */}
+        <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider mb-1">
+            <div className="flex items-center gap-2 text-blue-400 text-xs font-bold uppercase tracking-wider mb-1">
               <ShieldCheck className="w-4 h-4" />
-              Multi-Poli Hospital Console
+              Konsol Petugas Loket & Poliklinik
             </div>
-            <h1 className="text-2xl font-bold">Manajemen Antrean Presisi</h1>
-            <p className="text-xs text-slate-300">RS xxxxx</p>
+            <h1 className="text-2xl font-black">{RS_NAME}</h1>
+            <p className="text-xs text-blue-200/80">Sistem Antrean Presisi & Rekomendasi Kedatangan Terintegrasi</p>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowAddModal(true)}
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md"
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md"
             >
               <Plus className="w-4 h-4" /> Pasien Loket
             </button>
@@ -248,7 +248,7 @@ export default function AdminDashboardPage() {
               onClick={handleResetQueue}
               disabled={isResetting}
               className="px-3.5 py-2.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition border border-rose-500/30"
-              title={selectedFilterPoli === 'Semua Poli' ? 'Reset Semua Antrean' : `Reset Antrean ${selectedFilterPoli}`}
+              title={selectedFilterPoli === 'Semua Poli' ? 'Reset Semua Antrean RSUB' : `Reset Antrean ${selectedFilterPoli}`}
             >
               <RotateCcw className="w-4 h-4" />
               {isResetting ? 'Mereset...' : selectedFilterPoli === 'Semua Poli' ? 'Reset Semua' : `Reset ${selectedFilterPoli}`}
@@ -263,15 +263,15 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Filter Poli Tab Bar */}
+        {/* Filter Poli RSUB Tab Bar */}
         <div className="bg-slate-900/95 border-b border-slate-800 px-6 py-3 flex items-center gap-2 overflow-x-auto text-xs text-white">
-          <Filter className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 mr-1" />
-          <span className="font-bold text-slate-400 mr-2 flex-shrink-0">Filter Poli:</span>
+          <Filter className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mr-1" />
+          <span className="font-bold text-slate-400 mr-2 flex-shrink-0">Poli RSUB:</span>
           <button
             onClick={() => setSelectedFilterPoli('Semua Poli')}
             className={`px-3 py-1.5 rounded-lg font-semibold flex-shrink-0 transition ${
               selectedFilterPoli === 'Semua Poli' 
-                ? 'bg-indigo-600 text-white shadow' 
+                ? 'bg-blue-600 text-white shadow' 
                 : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
             }`}
           >
@@ -285,7 +285,7 @@ export default function AdminDashboardPage() {
                 onClick={() => setSelectedFilterPoli(p)}
                 className={`px-3 py-1.5 rounded-lg font-semibold flex-shrink-0 transition ${
                   selectedFilterPoli === p 
-                    ? 'bg-indigo-600 text-white shadow' 
+                    ? 'bg-blue-600 text-white shadow' 
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
@@ -338,16 +338,16 @@ export default function AdminDashboardPage() {
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-              <Users className="w-4 h-4 text-indigo-600" />
-              Daftar Antrean ({selectedFilterPoli})
+              <Users className="w-4 h-4 text-blue-600" />
+              Daftar Antrean RSUB ({selectedFilterPoli})
             </h2>
             <span className="text-[11px] text-slate-400 italic">
-              *Setiap poli memiliki nomor antrean 1..N yang terpisah
+              *Nomor antrean 1..N terpisah per poli
             </span>
           </div>
 
           {loading ? (
-            <p className="text-xs text-slate-400 py-6 text-center">Sinkronisasi data Supabase...</p>
+            <p className="text-xs text-slate-400 py-6 text-center">Sinkronisasi data Supabase RSUB...</p>
           ) : filteredQueues.length === 0 ? (
             <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-2xl">
               Belum ada antrean untuk {selectedFilterPoli}. Antrean berikutnya dimulai dari #1.
@@ -359,8 +359,8 @@ export default function AdminDashboardPage() {
                   <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] tracking-wider font-semibold">
                     <th className="py-3 px-3">No. Antrean Poli</th>
                     <th className="py-3 px-3">Nama Pasien</th>
-                    <th className="py-3 px-3">Poli Tujuan (Bisa Dialihkan)</th>
-                    <th className="py-3 px-3">Estimasi Jarak & Titik Mulai</th>
+                    <th className="py-3 px-3">Poli Tujuan (RSUB)</th>
+                    <th className="py-3 px-3">Titik Mulai & Jarak ke RSUB</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-3 text-right">Aksi Loket</th>
                   </tr>
@@ -393,7 +393,7 @@ export default function AdminDashboardPage() {
 
                         <td className="py-3.5 px-3">
                           <div className="flex items-center gap-1.5">
-                            <Stethoscope className={`w-3.5 h-3.5 flex-shrink-0 ${isCancelled ? 'text-slate-300' : 'text-indigo-500'}`} />
+                            <Stethoscope className={`w-3.5 h-3.5 flex-shrink-0 ${isCancelled ? 'text-slate-300' : 'text-blue-600'}`} />
                             {isCancelled ? (
                               <span className="text-slate-400 font-medium px-2 py-1 bg-slate-100 rounded-lg text-xs">
                                 {item.poli}
@@ -402,7 +402,7 @@ export default function AdminDashboardPage() {
                               <select
                                 value={item.poli}
                                 onChange={(e) => handleUpdatePoli(item.id, e.target.value)}
-                                className="bg-slate-50 border border-slate-200 hover:border-indigo-400 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
+                                className="bg-slate-50 border border-slate-200 hover:border-blue-400 rounded-lg px-2 py-1 text-xs font-semibold text-blue-950 focus:outline-none focus:ring-2 focus:ring-blue-500 transition cursor-pointer"
                               >
                                 {POLI_LIST.map((poliName) => (
                                   <option key={poliName} value={poliName}>
@@ -478,20 +478,20 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Modal Tambah Pasien Manual */}
+      {/* Modal Tambah Pasien Manual RSUB */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100">
-            <h2 className="text-base font-bold text-slate-800 mb-1">Tambah Pasien Loket Manual</h2>
-            <p className="text-xs text-slate-500 mb-4">Pilih poli tujuan untuk alokasi nomor antrean</p>
+            <h2 className="text-base font-bold text-slate-800 mb-1">Tambah Pasien Loket RSUB</h2>
+            <p className="text-xs text-slate-500 mb-4">Pilih poliklinik RSUB tujuan untuk nomor antrean mandiri</p>
 
             <form onSubmit={handleAdminAddPatient} className="space-y-3">
               <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1">Poli Tujuan</label>
+                <label className="text-[11px] font-bold text-slate-600 block mb-1">Poli Tujuan RSUB</label>
                 <select
                   value={adminPoli}
                   onChange={(e) => setAdminPoli(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 font-semibold"
                 >
                   {POLI_LIST.map((poliName) => (
                     <option key={poliName} value={poliName}>
@@ -508,8 +508,8 @@ export default function AdminDashboardPage() {
                   required
                   value={adminName}
                   onChange={(e) => setAdminName(e.target.value)}
-                  placeholder="Nama Pasien"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Nama Lengkap Pasien"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>
 
@@ -523,9 +523,9 @@ export default function AdminDashboardPage() {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-indigo-600/20"
+                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-blue-600/20"
                 >
-                  Simpan Antrean
+                  Simpan Antrean RSUB
                 </button>
               </div>
             </form>
