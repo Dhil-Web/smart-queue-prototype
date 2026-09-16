@@ -58,7 +58,7 @@ export default function AdminDashboardPage() {
       setIsAuthenticated(true);
       setLoginError('');
     } else {
-      setLoginError('PIN Keamanan salah. Coba: 1234');
+      setLoginError('PIN salah');
     }
   };
 
@@ -95,19 +95,10 @@ export default function AdminDashboardPage() {
     };
   }, [isAuthenticated]);
 
-  // Antrean yang difilter di tampilan tabel
   const filteredQueues = selectedFilterPoli === 'Semua Poli'
     ? queueList
     : queueList.filter((p) => p.poli === selectedFilterPoli);
 
-  // Cari pasien aktif khusus poli tertentu
-  const getActiveQueueNum = (poli: string) => {
-    const list = queueList.filter((p) => p.poli === poli);
-    const active = list.find((p) => p.status === 'in-progress');
-    return active ? active.queue_number : (list.find((p) => p.status === 'waiting')?.queue_number || '-');
-  };
-
-  // Panggil pasien (otomatis selesaikan pasien aktif lain di poli yang sama saja)
   const handleCallPatient = async (id: number, patientPoli: string) => {
     const currentlyActiveInPoli = queueList.find(
       (p) => p.poli === patientPoli && p.status === 'in-progress'
@@ -122,9 +113,7 @@ export default function AdminDashboardPage() {
     await supabase.from('queues').update({ status: 'completed' }).eq('id', id);
   };
 
-  // Mengalihkan poli pasien ke poli lain dengan nomor antrean urut baru di poli tujuan
   const handleUpdatePoli = async (id: number, newPoli: string) => {
-    // Ambil antrean terbesar di poli tujuan
     const targetPoliQueues = queueList.filter((p) => p.poli === newPoli);
     const nextNumInTarget = targetPoliQueues.length > 0
       ? Math.max(...targetPoliQueues.map((p) => p.queue_number)) + 1
@@ -140,7 +129,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // Tambah pasien loket manual dengan auto-increment per poli
   const handleAdminAddPatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminName.trim()) return;
@@ -164,7 +152,6 @@ export default function AdminDashboardPage() {
     setShowAddModal(false);
   };
 
-  // Reset antrean (bisa pilih reset poli yang sedang difilter atau semua poli)
   const handleResetQueue = async () => {
     const isFiltering = selectedFilterPoli !== 'Semua Poli';
     const confirmMessage = isFiltering
@@ -201,7 +188,7 @@ export default function AdminDashboardPage() {
             <Lock className="w-7 h-7" />
           </div>
           <h1 className="text-xl font-bold text-slate-800">Portal Petugas Faskes</h1>
-          <p className="text-xs text-slate-500 mt-1 mb-6">RS Sehat Sentosa — Masukkan PIN Loket</p>
+          <p className="text-xs text-slate-500 mt-1 mb-6">RS xxxxx</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             {loginError && (
@@ -218,7 +205,7 @@ export default function AdminDashboardPage() {
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                placeholder="Masukkan PIN (Default: 1234)"
+                placeholder="Masukkan PIN"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
@@ -227,7 +214,7 @@ export default function AdminDashboardPage() {
               type="submit"
               className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-indigo-600/25"
             >
-              Buka Dashboard Loket
+              Login
             </button>
           </form>
         </div>
@@ -247,7 +234,7 @@ export default function AdminDashboardPage() {
               Multi-Poli Hospital Console
             </div>
             <h1 className="text-2xl font-bold">Manajemen Antrean Presisi</h1>
-            <p className="text-xs text-slate-300">RS Sehat Sentosa — Triase & Antrean Mandiri Per Poli</p>
+            <p className="text-xs text-slate-300">RS xxxxx</p>
           </div>
 
           <div className="flex items-center gap-3">

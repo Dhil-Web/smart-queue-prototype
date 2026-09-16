@@ -7,15 +7,14 @@ import {
   Car, 
   Bike, 
   Building2, 
-  Sparkles, 
   ChevronLeft, 
   AlertCircle, 
   ArrowRight, 
   Hash, 
   AlertTriangle, 
-  Loader2,
-  Info,
-  Stethoscope
+  Loader2, 
+  Info, 
+  Stethoscope 
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST } from '@/lib/constants';
@@ -107,7 +106,6 @@ export default function PatientPage() {
             setTimeout(() => setResetNotice(false), 6000);
           }
         } else {
-          // Sinkron jika admin mengalihkan poli pasien secara live
           if (currentData.poli !== selectedPoli) {
             setSelectedPoli(currentData.poli);
           }
@@ -150,15 +148,12 @@ export default function PatientPage() {
     };
   }, []);
 
-  // Filter antrean khusus poli yang sedang dipilih di form
   const currentPoliQueues = queueList.filter((p) => p.poli === selectedPoli);
 
-  // Nomor antrean berikutnya khusus poli terpilih (Auto-Increment Per Poli)
   const nextQueueNumber = currentPoliQueues.length > 0 
     ? Math.max(...currentPoliQueues.map((p) => p.queue_number)) + 1 
     : 1;
 
-  // Antrean aktif di poli yang dipilih
   const activePoliPatient = currentPoliQueues.find((p) => p.status === 'in-progress');
   const currentPoliQueueNum = activePoliPatient 
     ? activePoliPatient.queue_number 
@@ -188,7 +183,6 @@ export default function PatientPage() {
       return;
     }
 
-    // Ambil antrean terakhir KHUSUS poli yang dipilih
     const { data: latestPoliData } = await supabase
       .from('queues')
       .select('queue_number')
@@ -252,7 +246,6 @@ export default function PatientPage() {
     setStep('form');
   };
 
-  // Antrean di depan hanya dihitung dari poli yang sama
   const waitingPatientsBeforeUser = currentPoliQueues.filter(
     (p) => p.queue_number < assignedQueue && p.status === 'waiting'
   ).length;
@@ -271,11 +264,9 @@ export default function PatientPage() {
         {/* Header Pasien */}
         <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 p-6 text-white text-center relative">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
-            <Sparkles className="w-3.5 h-3.5 text-blue-200" />
-            Smart Multi-Poli Queue Portal
+            RS xxxxx
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">SmartArrive AI</h1>
-          <p className="text-xs text-blue-100 mt-0.5">Antrean Presisi Mandiri Berdasarkan Poliklinik</p>
+          <h1 className="text-2xl font-bold tracking-tight">Daftar Antrian</h1>
         </div>
 
         {resetNotice && (
@@ -294,7 +285,7 @@ export default function PatientPage() {
               </div>
             )}
 
-            {/* Pilihan Poliklinik Utama (Di atas agar nomor urut langsung menyesuaikan) */}
+            {/* Pilihan Poliklinik */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
                 Pilih Poliklinik Tujuan *
@@ -316,7 +307,7 @@ export default function PatientPage() {
               </div>
             </div>
 
-            {/* Nomor Antrean Otomatis Sesuai Poli Terpilih */}
+            {/* Nomor Antrean Otomatis */}
             <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
