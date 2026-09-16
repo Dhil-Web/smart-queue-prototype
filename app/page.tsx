@@ -17,10 +17,14 @@ import {
   Stethoscope,
   CheckCircle2,
   Navigation,
-  Edit3
+  Edit3,
+  LocateFixed
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
+
+// Koordinat Resmi RSUB Malang (Soekarno-Hatta)
+const RSUB_COORDS = { lat: -7.9372, lng: 112.6163 };
 
 interface PatientQueue {
   id: number;
@@ -48,9 +52,11 @@ export default function PatientPage() {
   const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
   const [locationName, setLocationName] = useState('');
   
-  // State Jarak Manual
+  // State Jarak Manual & GPS
   const [distanceType, setDistanceType] = useState<'less_1' | 'custom'>('less_1');
   const [customDistanceKm, setCustomDistanceKm] = useState<number | ''>('');
+  const [isDetectingGps, setIsDetectingGps] = useState(false);
+  const [gpsStatusText, setGpsStatusText] = useState('');
 
   const [travelMode, setTravelMode] = useState<'motor' | 'mobil'>('motor');
   const [travelTime, setTravelTime] = useState<number | ''>('');
@@ -70,7 +76,7 @@ export default function PatientPage() {
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = registeredQueueId;
 
-  // Rumus hitung durasi dari jarak (km)
+  // Rumus estimasi durasi fallback
   const calculateDurationFromKm = (km: number, mode: 'motor' | 'mobil') => {
     if (km <= 0) return 3;
     if (mode === 'motor') {
@@ -80,6 +86,7 @@ export default function PatientPage() {
     }
   };
 
+  // Re-kalkulasi manual jika pengguna mengubah jarak manual
   useEffect(() => {
     if (locationMode === 'manual') {
       const dist = distanceType === 'less_1' ? 0.8 : (typeof customDistanceKm === 'number' ? customDistanceKm : 0);
@@ -89,6 +96,85 @@ export default function PatientPage() {
     }
   }, [distanceType, customDistanceKm, travelMode, locationMode]);
 
+  // Fungsi Deteksi GPS & Integrasi Routing OSRM
+  const handleDetectGps = () => {
+    if (!navigator.geolocation) {
+      setErrorMessage('Fitur GPS tidak didukung di browser ini.');
+      return;
+    }
+
+    setIsDetectingGps(true);
+    setGpsStatusText('Mencari sinyal GPS...');
+    setErrorMessage('');
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const userLat = pos.coords.latitude;
+        const userLng = pos.coords.longitude;
+
+        try {
+          setGpsStatusText('Menghitung rute ke RSUB...');
+
+          // 1. Ambil nama lokasi (Reverse Geocoding OpenStreetMap)
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userLat}&lon=${userLng}`
+          );
+          const geoData = await geoRes.json();
+          const road = geoData.address?.road || geoData.address?.suburb || 'Area Pasien';
+          const city = geoData.address?.city || geoData.address?.town || 'Malang';
+          setLocationName(`${road}, ${city}`);
+
+          // 2. Hitung jarak dan durasi nyata jalan raya ke RSUB via OSRM
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=false`;
+          const osrmRes = await fetch(osrmUrl);
+          const osrmData = await osrmRes.json();
+
+          if (osrmData.routes && osrmData.routes.length > 0) {
+            const distanceMeters = osrmData.routes[0].distance;
+            const durationSeconds = osrmData.routes[0].duration;
+
+            const distKm = parseFloat((distanceMeters / 1000).toFixed(1));
+            let durMinutes = Math.max(3, Math.round(durationSeconds / 60));
+
+            // Jika memakai motor, estimasikan sedikit lebih lincah di kemacetan
+            if (travelMode === 'motor') {
+              durMinutes = Math.max(3, Math.round(durMinutes * 0.75));
+            }
+
+            setTravelTime(durMinutes);
+            setDistanceType(distKm < 1 ? 'less_1' : 'custom');
+            if (distKm >= 1) setCustomDistanceKm(distKm);
+
+            setGpsStatusText(`Terdeteksi! Jarak: ~${distKm} km`);
+          } else {
+            // Fallback jarak radius langsung
+            setLocationName('Lokasi GPS Pasien');
+            setTravelTime(12);
+          }
+        } catch (err) {
+          console.error(err);
+          setLocationName('Lokasi GPS Pasien (Malang)');
+          setTravelTime(15);
+          setGpsStatusText('Menggunakan estimasi default GPS');
+        } finally {
+          setIsDetectingGps(false);
+          setTimeout(() => setGpsStatusText(''), 4000);
+        }
+      },
+      (err) => {
+        setIsDetectingGps(false);
+        setGpsStatusText('');
+        if (err.code === err.PERMISSION_DENIED) {
+          setErrorMessage('Izin akses lokasi ditolak. Silakan aktifkan izin lokasi browser atau gunakan input manual.');
+        } else {
+          setErrorMessage('Gagal mendeteksi lokasi GPS: ' + err.message);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // Baca Sesi Lokal
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -254,7 +340,7 @@ export default function PatientPage() {
       : 1;
 
     const finalLocationLabel = locationMode === 'manual'
-      ? `${locationName} (${distanceType === 'less_1' ? '<1 km' : `${customDistanceKm} km`})`
+      ? `${locationName} (${distanceType === 'less_1' ? '<1 km' : `${customDistanceKm || 1} km`})`
       : locationName;
 
     const newPatient = {
@@ -457,6 +543,30 @@ export default function PatientPage() {
                 </div>
               </div>
 
+              {/* Tombol Deteksi GPS Otomatis (Tersedia di kedua mode) */}
+              <button
+                type="button"
+                onClick={handleDetectGps}
+                disabled={isDetectingGps}
+                className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-[0.99]"
+              >
+                {isDetectingGps ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                    <span>{gpsStatusText || 'Mendeteksi Posisi...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <LocateFixed className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Gunakan Lokasi GPS Saya Saat Ini</span>
+                  </>
+                )}
+              </button>
+
+              {gpsStatusText && !isDetectingGps && (
+                <p className="text-[11px] text-emerald-600 font-semibold text-center">{gpsStatusText}</p>
+              )}
+
               {locationMode === 'auto' ? (
                 <div className="space-y-2">
                   <div className="relative">
@@ -466,7 +576,7 @@ export default function PatientPage() {
                       required
                       value={locationName}
                       onChange={(e) => setLocationName(e.target.value)}
-                      placeholder="Pilih salah satu preset area di bawah"
+                      placeholder="Pilih preset atau gunakan tombol GPS di atas"
                       className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
                     />
                   </div>
@@ -545,10 +655,10 @@ export default function PatientPage() {
 
                     {distanceType === 'custom' && (
                       <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                        <span className="text-xs text-slate-500">Jarak tempuh ke RSUB:</span>
+                        <span className="text-xs text-slate-500">Jarak rute ke RSUB:</span>
                         <input
                           type="number"
-                          step="0.5"
+                          step="0.1"
                           min="1"
                           max="150"
                           required
@@ -564,7 +674,7 @@ export default function PatientPage() {
                 </div>
               )}
 
-              {/* Moda Transportasi */}
+              {/* Moda Transportasi & Durasi */}
               <div className="flex items-center gap-2 pt-1">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
