@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { 
   User, 
   MapPin, 
@@ -22,6 +23,17 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
+
+// Komponen Peta di-load secara dinamis tanpa SSR agar tidak bentrok dengan Leaflet window object
+const RouteMap = dynamic(() => import('@/components/RouteMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-48 rounded-2xl bg-blue-50/50 border border-blue-100 flex flex-col items-center justify-center text-xs text-blue-500 gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" />
+      <span>Menyiapkan Peta Rute RSUB...</span>
+    </div>
+  ),
+});
 
 // Koordinat Resmi RSUB Malang (Soekarno-Hatta)
 const RSUB_COORDS = { lat: -7.9372, lng: 112.6163 };
@@ -52,6 +64,10 @@ export default function PatientPage() {
   const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
   const [locationName, setLocationName] = useState('');
   
+  // State Koordinat & Peta
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
+
   // State Jarak GPS & Manual
   const [detectedDistanceKm, setDetectedDistanceKm] = useState<number | null>(null);
   const [distanceType, setDistanceType] = useState<'less_1' | 'custom'>('less_1');
@@ -77,7 +93,7 @@ export default function PatientPage() {
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = registeredQueueId;
 
-  // Rumus estimasi durasi fallback
+  // Rumus estimasi durasi manual fallback
   const calculateDurationFromKm = (km: number, mode: 'motor' | 'mobil') => {
     if (km <= 0) return 3;
     if (mode === 'motor') {
@@ -87,7 +103,6 @@ export default function PatientPage() {
     }
   };
 
-  // Re-kalkulasi durasi saat jarak manual atau moda transportasi berubah
   useEffect(() => {
     if (locationMode === 'manual') {
       const dist = distanceType === 'less_1' ? 0.8 : (typeof customDistanceKm === 'number' ? customDistanceKm : 0);
@@ -99,7 +114,7 @@ export default function PatientPage() {
     }
   }, [distanceType, customDistanceKm, detectedDistanceKm, travelMode, locationMode]);
 
-  // Deteksi GPS & Routing OSRM
+  // Deteksi GPS + Routing Geometri OSRM
   const handleDetectGps = () => {
     if (!navigator.geolocation) {
       setErrorMessage('Fitur GPS tidak didukung di peramban ini.');
@@ -114,28 +129,31 @@ export default function PatientPage() {
       async (pos) => {
         const userLat = pos.coords.latitude;
         const userLng = pos.coords.longitude;
+        setUserCoords({ lat: userLat, lng: userLng });
 
         try {
-          setGpsStatusText('Menghitung rute ke RSUB...');
+          setGpsStatusText('Menggambar rute ke RSUB...');
 
-          // Reverse Geocoding
+          // Reverse Geocoding Nama Jalan
           const geoRes = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userLat}&lon=${userLng}`
           );
           const geoData = await geoRes.json();
           const road = geoData.address?.road || geoData.address?.suburb || 'Area Pasien';
           const city = geoData.address?.city || geoData.address?.town || 'Malang';
-          const detectedLoc = `${road}, ${city}`;
-          setLocationName(detectedLoc);
+          setLocationName(`${road}, ${city}`);
 
-          // Routing OSRM
-          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=false`;
+          // Ambil rute jalan raya lengkap + geometri garis rute (geojson)
+          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=full&geometries=geojson`;
           const osrmRes = await fetch(osrmUrl);
           const osrmData = await osrmRes.json();
 
           if (osrmData.routes && osrmData.routes.length > 0) {
             const distanceMeters = osrmData.routes[0].distance;
             const durationSeconds = osrmData.routes[0].duration;
+
+            // Simpan koordinat garis rute untuk digambar di peta
+            setRouteGeoJSON(osrmData.routes[0].geometry);
 
             const distKm = parseFloat((distanceMeters / 1000).toFixed(1));
             let durMinutes = Math.max(3, Math.round(durationSeconds / 60));
@@ -146,11 +164,11 @@ export default function PatientPage() {
 
             setDetectedDistanceKm(distKm);
             setTravelTime(durMinutes);
-            setGpsStatusText(`Lokasi berhasil dikunci (${distKm} km dari RSUB)`);
+            setGpsStatusText(`Rute siap! Jarak: ${distKm} km ke RSUB`);
           } else {
             setDetectedDistanceKm(2.5);
             setTravelTime(10);
-            setGpsStatusText('Lokasi berhasil dikunci (~2.5 km)');
+            setGpsStatusText('Lokasi berhasil dikunci');
           }
         } catch (err) {
           console.error(err);
@@ -175,7 +193,7 @@ export default function PatientPage() {
     );
   };
 
-  // Baca Sesi Lokal
+  // Baca Sesi Lokal Pasien
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -511,6 +529,8 @@ export default function PatientPage() {
                       setLocationMode('auto');
                       setLocationName('');
                       setDetectedDistanceKm(null);
+                      setUserCoords(null);
+                      setRouteGeoJSON(null);
                       setTravelTime('');
                       setGpsStatusText('');
                     }}
@@ -525,6 +545,8 @@ export default function PatientPage() {
                     onClick={() => {
                       setLocationMode('manual');
                       setLocationName('');
+                      setUserCoords(null);
+                      setRouteGeoJSON(null);
                       setDistanceType('less_1');
                       setCustomDistanceKm('');
                       setTravelTime(calculateDurationFromKm(0.8, travelMode));
@@ -539,7 +561,7 @@ export default function PatientPage() {
                 </div>
               </div>
 
-              {/* TAMPILAN TAB 1: OTOMATIS (GPS) */}
+              {/* TAMPILAN TAB 1: OTOMATIS (GPS DENGAN PETA INTERAKTIF) */}
               {locationMode === 'auto' ? (
                 <div className="space-y-2.5 bg-blue-50/50 p-3.5 rounded-2xl border border-blue-100">
                   <button
@@ -556,14 +578,14 @@ export default function PatientPage() {
                     ) : (
                       <>
                         <LocateFixed className="w-4 h-4" />
-                        <span>Cari Posisi GPS Saya</span>
+                        <span>Cari Posisi GPS Saya & Buat Rute</span>
                       </>
                     )}
                   </button>
 
-                  {/* Panel Hasil Deteksi GPS */}
-                  {detectedDistanceKm !== null ? (
-                    <div className="bg-white p-3 rounded-xl border border-blue-200 shadow-sm space-y-2">
+                  {/* Panel Peta & Hasil Deteksi */}
+                  {detectedDistanceKm !== null && userCoords ? (
+                    <div className="bg-white p-3 rounded-xl border border-blue-200 shadow-sm space-y-3">
                       <div className="flex items-start gap-2">
                         <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
@@ -571,6 +593,13 @@ export default function PatientPage() {
                           <p className="text-xs font-bold text-slate-800 truncate">{locationName}</p>
                         </div>
                       </div>
+
+                      {/* Komponen Peta Rute Leaflet */}
+                      <RouteMap
+                        userCoords={userCoords}
+                        hospitalCoords={RSUB_COORDS}
+                        routeGeoJSON={routeGeoJSON}
+                      />
 
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
                         <span className="text-xs text-slate-500">Jarak Rute Aktual ke RSUB:</span>
@@ -581,7 +610,7 @@ export default function PatientPage() {
                     </div>
                   ) : (
                     <p className="text-[11px] text-slate-500 text-center italic py-1">
-                      Klik tombol di atas untuk mengukur jarak titik Anda ke RSUB secara otomatis.
+                      Klik tombol di atas untuk melihat peta rute dan menghitung jarak Anda ke RSUB.
                     </p>
                   )}
 
