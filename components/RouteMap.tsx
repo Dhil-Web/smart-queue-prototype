@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import L from 'leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
 
-// Ikon Pin Leaflet
+// Fix icon marker Leaflet di bundler Webpack/Next.js
 const patientIcon = L.icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
@@ -16,12 +18,35 @@ const patientIcon = L.icon({
 
 const hospitalIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
   shadowSize: [41, 41],
 });
+
+// Auto-fit kamera peta agar kedua titik terlihat
+function MapBoundsUpdater({
+  userCoords,
+  hospitalCoords,
+}: {
+  userCoords: { lat: number; lng: number };
+  hospitalCoords: { lat: number; lng: number };
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (userCoords && hospitalCoords) {
+      const bounds = L.latLngBounds(
+        [userCoords.lat, userCoords.lng],
+        [hospitalCoords.lat, hospitalCoords.lng]
+      );
+      map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
+    }
+  }, [userCoords, hospitalCoords, map]);
+
+  return null;
+}
 
 interface RouteMapProps {
   userCoords: { lat: number; lng: number };
@@ -29,68 +54,49 @@ interface RouteMapProps {
   routeGeoJSON?: any;
 }
 
-export default function RouteMap({ userCoords, hospitalCoords, routeGeoJSON }: RouteMapProps) {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current).setView(
-        [userCoords.lat, userCoords.lng],
-        13
-      );
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap',
-      }).addTo(map);
-
-      mapInstanceRef.current = map;
-    }
-
-    const map = mapInstanceRef.current;
-
-    // Bersihkan marker & rute lama sebelum render baru
-    map.eachLayer((layer) => {
-      if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.GeoJSON) {
-        map.removeLayer(layer);
-      }
-    });
-
-    // Pasang Pin Lokasi Pasien & Pin RSUB
-    L.marker([userCoords.lat, userCoords.lng], { icon: patientIcon })
-      .addTo(map)
-      .bindPopup('<b>Lokasi Anda</b>');
-
-    L.marker([hospitalCoords.lat, hospitalCoords.lng], { icon: hospitalIcon })
-      .addTo(map)
-      .bindPopup('<b>RSUB Malang</b>');
-
-    // Gambar Garis Rute Biru
-    if (routeGeoJSON) {
-      const routeLayer = L.geoJSON(routeGeoJSON, {
-        style: {
-          color: '#2563eb',
-          weight: 5,
-          opacity: 0.85,
-        },
-      }).addTo(map);
-
-      map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
-    } else {
-      const bounds = L.latLngBounds(
-        [userCoords.lat, userCoords.lng],
-        [hospitalCoords.lat, hospitalCoords.lng]
-      );
-      map.fitBounds(bounds, { padding: [30, 30] });
-    }
-  }, [userCoords, hospitalCoords, routeGeoJSON]);
-
+export default function RouteMap({
+  userCoords,
+  hospitalCoords,
+  routeGeoJSON,
+}: RouteMapProps) {
   return (
-    <div
-      ref={mapContainerRef}
-      className="w-full h-48 rounded-2xl border border-blue-200 shadow-inner overflow-hidden z-0"
-    />
+    <div className="rounded-xl overflow-hidden border border-slate-200 h-52 w-full relative z-0">
+      <MapContainer
+        center={[hospitalCoords.lat, hospitalCoords.lng]}
+        zoom={14}
+        scrollWheelZoom={false}
+        className="h-full w-full"
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+
+        <MapBoundsUpdater userCoords={userCoords} hospitalCoords={hospitalCoords} />
+
+        {/* Marker Pasien */}
+        <Marker position={[userCoords.lat, userCoords.lng]} icon={patientIcon}>
+          <Popup>Lokasi Berangkat Pasien</Popup>
+        </Marker>
+
+        {/* Marker RSUB (Kimia Farma / Pintu Masuk) */}
+        <Marker position={[hospitalCoords.lat, hospitalCoords.lng]} icon={hospitalIcon}>
+          <Popup>RS Brawijaya (Kimia Farma)</Popup>
+        </Marker>
+
+        {/* Garis Rute Biru */}
+        {routeGeoJSON && (
+          <GeoJSON
+            key={JSON.stringify(routeGeoJSON)}
+            data={routeGeoJSON}
+            style={{
+              color: '#2563eb',
+              weight: 5,
+              opacity: 0.85,
+            }}
+          />
+        )}
+      </MapContainer>
+    </div>
   );
 }

@@ -24,19 +24,19 @@ import {
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
 
-// Komponen Peta di-load secara dinamis tanpa SSR agar tidak bentrok dengan Leaflet window object
+// Load Komponen Peta secara dinamis tanpa SSR
 const RouteMap = dynamic(() => import('@/components/RouteMap'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-48 rounded-2xl bg-blue-50/50 border border-blue-100 flex flex-col items-center justify-center text-xs text-blue-500 gap-2">
+    <div className="w-full h-52 rounded-2xl bg-blue-50/50 border border-blue-100 flex flex-col items-center justify-center text-xs text-blue-500 gap-2">
       <Loader2 className="w-5 h-5 animate-spin" />
       <span>Menyiapkan Peta Rute RSUB...</span>
     </div>
   ),
 });
 
-// Koordinat Resmi RSUB Malang (Soekarno-Hatta)
-const RSUB_COORDS = { lat: -7.941357, lng: 112.621584 };
+// Titik Gerbang Kimia Farma RSUB Malang (menghindari one-way Jl. Soekarno-Hatta)
+const RSUB_COORDS = { lat: -7.94132, lng: 112.61715 };
 
 interface PatientQueue {
   id: number;
@@ -55,20 +55,20 @@ export default function PatientPage() {
   const [step, setStep] = useState<'form' | 'dashboard'>('form');
   const [queueList, setQueueList] = useState<PatientQueue[]>([]);
 
-  // State Form Pasien
+  // State Form
   const [registeredQueueId, setRegisteredQueueId] = useState<number | null>(null);
   const [patientName, setPatientName] = useState('');
   const [selectedPoli, setSelectedPoli] = useState<string>(POLI_LIST[0]);
   
-  // Opsi Input Lokasi: 'auto' (GPS) | 'manual'
+  // Input Lokasi
   const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
   const [locationName, setLocationName] = useState('');
   
-  // State Koordinat & Peta
+  // Koordinat & Peta
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
 
-  // State Jarak GPS & Manual
+  // Jarak & GPS
   const [detectedDistanceKm, setDetectedDistanceKm] = useState<number | null>(null);
   const [distanceType, setDistanceType] = useState<'less_1' | 'custom'>('less_1');
   const [customDistanceKm, setCustomDistanceKm] = useState<number | ''>('');
@@ -83,7 +83,7 @@ export default function PatientPage() {
   const [completedNotice, setCompletedNotice] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // State Modal Peringatan Ubah Data
+  // Modal Peringatan Ubah Data
   const [showEditWarning, setShowEditWarning] = useState(false);
   const [isUpdatingOldData, setIsUpdatingOldData] = useState(false);
 
@@ -114,9 +114,9 @@ export default function PatientPage() {
     }
   }, [distanceType, customDistanceKm, detectedDistanceKm, travelMode, locationMode]);
 
-  // Deteksi GPS + Routing Geometri OSRM
+  // Reverse Geocoding (Nominatim) + Routing OSRM
   const handleDetectGps = () => {
-    if (!navigator.geolocation) {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
       setErrorMessage('Fitur GPS tidak didukung di peramban ini.');
       return;
     }
@@ -132,50 +132,63 @@ export default function PatientPage() {
         setUserCoords({ lat: userLat, lng: userLng });
 
         try {
-          setGpsStatusText('Menggambar rute ke RSUB...');
+          setGpsStatusText('Membaca nama wilayah (Nominatim)...');
 
-          // Reverse Geocoding Nama Jalan
-          const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userLat}&lon=${userLng}`
-          );
+          // Reverse Geocoding otomatis Nominatim OpenStreetMap
+          const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${userLat}&lon=${userLng}`;
+          const geoRes = await fetch(nominatimUrl, {
+            headers: {
+              'Accept-Language': 'id',
+            },
+          });
           const geoData = await geoRes.json();
-          const road = geoData.address?.road || geoData.address?.suburb || 'Area Pasien';
-          const city = geoData.address?.city || geoData.address?.town || 'Malang';
-          setLocationName(`${road}, ${city}`);
 
-          // Ambil rute jalan raya lengkap + geometri garis rute (geojson)
+          let resolvedAddress = 'Lokasi Pasien Terdeteksi';
+          if (geoData && geoData.address) {
+            const addr = geoData.address;
+            const street = addr.road || addr.pedestrian || addr.residential || '';
+            const village = addr.village || addr.suburb || addr.neighbourhood || '';
+            const city = addr.city || addr.town || addr.municipality || 'Malang';
+
+            const parts = [street, village, city].filter(Boolean);
+            resolvedAddress = parts.length > 0 ? parts.join(', ') : geoData.display_name.split(',').slice(0, 3).join(',');
+          }
+          setLocationName(resolvedAddress);
+
+          // Routing OSRM ke Kimia Farma RSUB
+          setGpsStatusText('Menggambar rute ke RSUB...');
           const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=full&geometries=geojson`;
           const osrmRes = await fetch(osrmUrl);
           const osrmData = await osrmRes.json();
 
           if (osrmData.routes && osrmData.routes.length > 0) {
-            const distanceMeters = osrmData.routes[0].distance;
-            const durationSeconds = osrmData.routes[0].duration;
+            const primaryRoute = osrmData.routes[0];
+            const distanceMeters = primaryRoute.distance;
+            const durationSeconds = primaryRoute.duration;
 
-            // Simpan koordinat garis rute untuk digambar di peta
-            setRouteGeoJSON(osrmData.routes[0].geometry);
+            setRouteGeoJSON(primaryRoute.geometry);
 
             const distKm = parseFloat((distanceMeters / 1000).toFixed(1));
-            let durMinutes = Math.max(3, Math.round(durationSeconds / 60));
+            let durMinutes = Math.max(2, Math.round(durationSeconds / 60));
 
             if (travelMode === 'motor') {
-              durMinutes = Math.max(3, Math.round(durMinutes * 0.75));
+              durMinutes = Math.max(2, Math.round(durMinutes * 0.75));
             }
 
             setDetectedDistanceKm(distKm);
             setTravelTime(durMinutes);
             setGpsStatusText(`Rute siap! Jarak: ${distKm} km ke RSUB`);
           } else {
-            setDetectedDistanceKm(2.5);
-            setTravelTime(10);
-            setGpsStatusText('Lokasi berhasil dikunci');
+            setDetectedDistanceKm(1.5);
+            setTravelTime(5);
+            setGpsStatusText('Posisi terkunci');
           }
         } catch (err) {
           console.error(err);
-          setLocationName('Titik GPS Pasien (Malang)');
-          setDetectedDistanceKm(3.0);
-          setTravelTime(12);
-          setGpsStatusText('Menggunakan titik koordinat terdeteksi');
+          setLocationName('Lokasi Terdeteksi (Malang)');
+          setDetectedDistanceKm(2.0);
+          setTravelTime(8);
+          setGpsStatusText('Menggunakan estimasi default');
         } finally {
           setIsDetectingGps(false);
         }
@@ -193,7 +206,7 @@ export default function PatientPage() {
     );
   };
 
-  // Baca Sesi Lokal Pasien
+  // Baca sesi lokal pasien
   useEffect(() => {
     const savedSession = localStorage.getItem(STORAGE_KEY);
     if (savedSession) {
@@ -515,7 +528,7 @@ export default function PatientPage() {
               </div>
             </div>
 
-            {/* Lokasi Keberangkatan (Dua Tab: Otomatis GPS vs Input Manual) */}
+            {/* Lokasi Keberangkatan */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
@@ -561,7 +574,7 @@ export default function PatientPage() {
                 </div>
               </div>
 
-              {/* TAMPILAN TAB 1: OTOMATIS (GPS DENGAN PETA INTERAKTIF) */}
+              {/* TAB 1: OTOMATIS (GPS + NOMINATIM + PETA INTERAKTIF) */}
               {locationMode === 'auto' ? (
                 <div className="space-y-2.5 bg-blue-50/50 p-3.5 rounded-2xl border border-blue-100">
                   <button
@@ -573,7 +586,7 @@ export default function PatientPage() {
                     {isDetectingGps ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Mendeteksi Koordinat Pasien...</span>
+                        <span>Mendeteksi Lokasi & Geocoding...</span>
                       </>
                     ) : (
                       <>
@@ -583,18 +596,24 @@ export default function PatientPage() {
                     )}
                   </button>
 
-                  {/* Panel Peta & Hasil Deteksi */}
+                  {/* Panel Peta Leaflet & Info Geocoding */}
                   {detectedDistanceKm !== null && userCoords ? (
                     <div className="bg-white p-3 rounded-xl border border-blue-200 shadow-sm space-y-3">
-                      <div className="flex items-start gap-2">
+                      
+                      {/* Alamat Dinamis dari Nominatim */}
+                      <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
                         <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
-                          <span className="text-[10px] text-slate-400 font-semibold block">Posisi Terdeteksi</span>
-                          <p className="text-xs font-bold text-slate-800 truncate">{locationName}</p>
+                          <span className="text-[10px] text-blue-600 font-bold uppercase tracking-wider block">
+                            Hasil Geocoding (Nominatim)
+                          </span>
+                          <p className="text-xs font-semibold text-slate-800 leading-snug">
+                            {locationName}
+                          </p>
                         </div>
                       </div>
 
-                      {/* Komponen Peta Rute Leaflet */}
+                      {/* Komponen Peta Leaflet */}
                       <RouteMap
                         userCoords={userCoords}
                         hospitalCoords={RSUB_COORDS}
@@ -610,7 +629,7 @@ export default function PatientPage() {
                     </div>
                   ) : (
                     <p className="text-[11px] text-slate-500 text-center italic py-1">
-                      Klik tombol di atas untuk melihat peta rute dan menghitung jarak Anda ke RSUB.
+                      Klik tombol di atas untuk membaca nama jalan via Nominatim dan membuat rute ke RSUB.
                     </p>
                   )}
 
@@ -619,7 +638,7 @@ export default function PatientPage() {
                   )}
                 </div>
               ) : (
-                /* TAMPILAN TAB 2: INPUT MANUAL */
+                /* TAB 2: INPUT MANUAL */
                 <div className="space-y-2.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
                   <div>
                     <label className="text-[11px] font-semibold text-slate-500 block mb-1">
@@ -688,7 +707,7 @@ export default function PatientPage() {
                 </div>
               )}
 
-              {/* Moda Transportasi & Durasi */}
+              {/* Pilihan Kendaraan & Durasi */}
               <div className="flex items-center gap-2 pt-1">
                 <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
                   <button
