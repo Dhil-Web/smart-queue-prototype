@@ -1,870 +1,241 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { 
-  User, 
-  MapPin, 
-  Car, 
-  Bike, 
-  Building2, 
-  ChevronLeft, 
-  AlertCircle, 
-  ArrowRight, 
-  Hash, 
-  AlertTriangle, 
-  Loader2, 
-  Info, 
-  Stethoscope,
-  CheckCircle2,
-  LocateFixed,
-  Edit3,
-  Compass
-} from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
+import 'leaflet/dist/leaflet.css';
 
-// Komponen Peta di-load secara dinamis tanpa SSR agar tidak bentrok dengan Leaflet window object
-const RouteMap = dynamic(() => import('@/components/RouteMap'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-48 rounded-2xl bg-blue-50/50 border border-blue-100 flex flex-col items-center justify-center text-xs text-blue-500 gap-2">
-      <Loader2 className="w-5 h-5 animate-spin" />
-      <span>Menyiapkan Peta Rute RSUB...</span>
-    </div>
-  ),
-});
+// Import komponen Leaflet secara dinamis (disable SSR agar tidak crash di Next.js)
+const MapContainer = dynamic(
+  () => import('react-leaflet').then((mod) => mod.MapContainer),
+  { ssr: false }
+);
+const TileLayer = dynamic(
+  () => import('react-leaflet').then((mod) => mod.TileLayer),
+  { ssr: false }
+);
+const Marker = dynamic(
+  () => import('react-leaflet').then((mod) => mod.Marker),
+  { ssr: false }
+);
+const Popup = dynamic(
+  () => import('react-leaflet').then((mod) => mod.Popup),
+  { ssr: false }
+);
+const Polyline = dynamic(
+  () => import('react-leaflet').then((mod) => mod.Polyline),
+  { ssr: false }
+);
 
-// Koordinat Resmi RSUB Malang (Soekarno-Hatta)
-const RSUB_COORDS = { lat: -7.9405, lng: 112.6178 };
+// Koordinat gerbang masuk RSUB (titik X Jalan Soekarno-Hatta)
+const RSUB_COORDS = { lat: -7.94055, lng: 112.61795 };
 
-interface PatientQueue {
-  id: number;
-  queue_number: number;
-  name: string;
-  poli: string;
-  location: string;
-  travel_mode: 'motor' | 'mobil';
-  travel_time: number;
-  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
-}
+export default function Home() {
+  const [currentQueue, setCurrentQueue] = useState(12);
+  const [userQueue] = useState(18);
+  const [travelTime, setTravelTime] = useState(10);
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
+    lat: -7.9355, // Titik simulasi awal di Mojolangu
+    lng: 112.6145,
+  });
+  const [data, setData] = useState<any>(null);
 
-const STORAGE_KEY = 'smartarrive_patient_session';
+  // Ambil rute & estimasi waktu tempuh dari OSRM
+  const fetchRouteAndDuration = async (lat: number, lng: number) => {
+    try {
+      // Format OSRM: {lng},{lat}
+      const url = `https://router.project-osrm.org/route/v1/driving/${lng},${lat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url);
+      const json = await res.json();
 
-export default function PatientPage() {
-  const [step, setStep] = useState<'form' | 'dashboard'>('form');
-  const [queueList, setQueueList] = useState<PatientQueue[]>([]);
-
-  // State Form Pasien
-  const [registeredQueueId, setRegisteredQueueId] = useState<number | null>(null);
-  const [patientName, setPatientName] = useState('');
-  const [selectedPoli, setSelectedPoli] = useState<string>(POLI_LIST[0]);
-  
-  // Opsi Input Lokasi: 'auto' (GPS) | 'manual'
-  const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
-  const [locationName, setLocationName] = useState('');
-  
-  // State Koordinat & Peta
-  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
-
-  // State Jarak GPS & Manual
-  const [detectedDistanceKm, setDetectedDistanceKm] = useState<number | null>(null);
-  const [distanceType, setDistanceType] = useState<'less_1' | 'custom'>('less_1');
-  const [customDistanceKm, setCustomDistanceKm] = useState<number | ''>('');
-  const [isDetectingGps, setIsDetectingGps] = useState(false);
-  const [gpsStatusText, setGpsStatusText] = useState('');
-
-  const [travelMode, setTravelMode] = useState<'motor' | 'mobil'>('motor');
-  const [travelTime, setTravelTime] = useState<number | ''>('');
-  const [assignedQueue, setAssignedQueue] = useState<number>(1);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [resetNotice, setResetNotice] = useState(false);
-  const [completedNotice, setCompletedNotice] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // State Modal Peringatan Ubah Data
-  const [showEditWarning, setShowEditWarning] = useState(false);
-  const [isUpdatingOldData, setIsUpdatingOldData] = useState(false);
-
-  const avgServiceTime = 5;
-  const [currentTime, setCurrentTime] = useState(new Date());
-
-  const activeIdRef = useRef<number | null>(null);
-  activeIdRef.current = registeredQueueId;
-
-  // Rumus estimasi durasi manual fallback
-  const calculateDurationFromKm = (km: number, mode: 'motor' | 'mobil') => {
-    if (km <= 0) return 3;
-    if (mode === 'motor') {
-      return Math.max(3, Math.round((km / 25) * 60 + 2));
-    } else {
-      return Math.max(5, Math.round((km / 18) * 60 + 4));
+      if (json.routes && json.routes.length > 0) {
+        const route = json.routes[0];
+        // Leaflet format: [lat, lng]
+        const latLngs: [number, number][] = route.geometry.coordinates.map(
+          (c: [number, number]) => [c[1], c[0]]
+        );
+        setRouteCoords(latLngs);
+        setTravelTime(Math.max(1, Math.round(route.duration / 60)));
+        setDistanceKm(Number((route.distance / 1000).toFixed(1)));
+      }
+    } catch (err) {
+      console.error('Gagal mengambil rute OSRM:', err);
     }
   };
 
-  useEffect(() => {
-    if (locationMode === 'manual') {
-      const dist = distanceType === 'less_1' ? 0.8 : (typeof customDistanceKm === 'number' ? customDistanceKm : 0);
-      if (dist > 0) {
-        setTravelTime(calculateDurationFromKm(dist, travelMode));
-      }
-    } else if (locationMode === 'auto' && detectedDistanceKm !== null) {
-      setTravelTime(calculateDurationFromKm(detectedDistanceKm, travelMode));
-    }
-  }, [distanceType, customDistanceKm, detectedDistanceKm, travelMode, locationMode]);
-
-  // Deteksi GPS + Routing Geometri OSRM
-  const handleDetectGps = () => {
-    if (!navigator.geolocation) {
-      setErrorMessage('Fitur GPS tidak didukung di peramban ini.');
-      return;
-    }
-
-    setIsDetectingGps(true);
-    setGpsStatusText('Mencari sinyal GPS...');
-    setErrorMessage('');
-
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const userLat = pos.coords.latitude;
-        const userLng = pos.coords.longitude;
-        setUserCoords({ lat: userLat, lng: userLng });
-
-        try {
-          setGpsStatusText('Menggambar rute ke RSUB...');
-
-          // Reverse Geocoding Nama Jalan
-          const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userLat}&lon=${userLng}`
-          );
-          const geoData = await geoRes.json();
-          const road = geoData.address?.road || geoData.address?.suburb || 'Area Pasien';
-          const city = geoData.address?.city || geoData.address?.town || 'Malang';
-          setLocationName(`${road}, ${city}`);
-
-          // Ambil rute jalan raya lengkap + geometri garis rute (geojson)
-          const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=full&geometries=geojson`;
-          const osrmRes = await fetch(osrmUrl);
-          const osrmData = await osrmRes.json();
-
-          if (osrmData.routes && osrmData.routes.length > 0) {
-            const distanceMeters = osrmData.routes[0].distance;
-            const durationSeconds = osrmData.routes[0].duration;
-
-            // Simpan koordinat garis rute untuk digambar di peta
-            setRouteGeoJSON(osrmData.routes[0].geometry);
-
-            const distKm = parseFloat((distanceMeters / 1000).toFixed(1));
-            let durMinutes = Math.max(3, Math.round(durationSeconds / 60));
-
-            if (travelMode === 'motor') {
-              durMinutes = Math.max(3, Math.round(durMinutes * 0.75));
-            }
-
-            setDetectedDistanceKm(distKm);
-            setTravelTime(durMinutes);
-            setGpsStatusText(`Rute siap! Jarak: ${distKm} km ke RSUB`);
-          } else {
-            setDetectedDistanceKm(2.5);
-            setTravelTime(10);
-            setGpsStatusText('Lokasi berhasil dikunci');
-          }
-        } catch (err) {
-          console.error(err);
-          setLocationName('Titik GPS Pasien (Malang)');
-          setDetectedDistanceKm(3.0);
-          setTravelTime(12);
-          setGpsStatusText('Menggunakan titik koordinat terdeteksi');
-        } finally {
-          setIsDetectingGps(false);
-        }
-      },
-      (err) => {
-        setIsDetectingGps(false);
-        setGpsStatusText('');
-        if (err.code === err.PERMISSION_DENIED) {
-          setErrorMessage('Izin lokasi ditolak. Silakan izinkan akses lokasi atau gunakan opsi Input Manual.');
-        } else {
-          setErrorMessage('Gagal mendeteksi lokasi GPS: ' + err.message);
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  // Baca Sesi Lokal Pasien
-  useEffect(() => {
-    const savedSession = localStorage.getItem(STORAGE_KEY);
-    if (savedSession) {
-      try {
-        const parsed = JSON.parse(savedSession);
-        if (parsed && parsed.id) {
-          setRegisteredQueueId(parsed.id);
-          activeIdRef.current = parsed.id;
-          setPatientName(parsed.name || '');
-          setSelectedPoli(parsed.poli || POLI_LIST[0]);
-          setLocationName(parsed.location || '');
-          setTravelMode(parsed.travel_mode || 'motor');
-          setTravelTime(parsed.travel_time || 0);
-          setAssignedQueue(parsed.queue_number || 1);
-          setStep('dashboard');
-        }
-      } catch (err) {
-        console.error('Gagal membaca sesi lokal:', err);
-      }
-    }
-  }, []);
-
-  const fetchQueues = async () => {
-    const { data, error } = await supabase
-      .from('queues')
-      .select('*')
-      .order('queue_number', { ascending: true });
-
-    if (!error && data) {
-      const list = data as PatientQueue[];
-      setQueueList(list);
-
-      const currentActiveId = activeIdRef.current;
-      if (currentActiveId) {
-        const currentData = list.find((p) => p.id === currentActiveId);
-
-        if (!currentData) {
-          localStorage.removeItem(STORAGE_KEY);
-          setRegisteredQueueId(null);
-          activeIdRef.current = null;
-          setStep('form');
-          setResetNotice(true);
-          setTimeout(() => setResetNotice(false), 6000);
-          return;
-        }
-
-        if (currentData.status === 'completed') {
-          localStorage.removeItem(STORAGE_KEY);
-          setRegisteredQueueId(null);
-          activeIdRef.current = null;
-          setStep('form');
-          setCompletedNotice(true);
-          setTimeout(() => setCompletedNotice(false), 7000);
-          return;
-        }
-
-        if (currentData.status === 'cancelled') {
-          localStorage.removeItem(STORAGE_KEY);
-          setRegisteredQueueId(null);
-          activeIdRef.current = null;
-          setStep('form');
-          return;
-        }
-
-        if (currentData.poli !== selectedPoli) {
-          setSelectedPoli(currentData.poli);
-        }
-      }
+  // Hitung jadwal antrean
+  const fetchQueueEstimate = async () => {
+    try {
+      const res = await fetch('/api/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentQueue,
+          userQueue,
+          avgServiceTime: 5,
+          travelTimeMinutes: travelTime,
+        }),
+      });
+      const result = await res.json();
+      setData(result);
+    } catch (err) {
+      console.error('Gagal menghitung antrean:', err);
     }
   };
 
-  useEffect(() => {
-    fetchQueues();
-
-    const channel = supabase
-      .channel('realtime_patient_queues')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'queues' },
-        (payload) => {
-          const currentActiveId = activeIdRef.current;
-
-          if (payload.eventType === 'DELETE') {
-            if (!payload.old || payload.old.id === currentActiveId || !currentActiveId) {
-              localStorage.removeItem(STORAGE_KEY);
-              setRegisteredQueueId(null);
-              activeIdRef.current = null;
-              setStep('form');
-              setResetNotice(true);
-              setTimeout(() => setResetNotice(false), 6000);
-            }
-          }
-
-          if (payload.eventType === 'UPDATE' && payload.new) {
-            const updatedRow = payload.new as PatientQueue;
-            if (updatedRow.id === currentActiveId && updatedRow.status === 'completed') {
-              localStorage.removeItem(STORAGE_KEY);
-              setRegisteredQueueId(null);
-              activeIdRef.current = null;
-              setStep('form');
-              setCompletedNotice(true);
-              setTimeout(() => setCompletedNotice(false), 7000);
-            }
-          }
-
-          fetchQueues();
+  // Deteksi lokasi asli pengguna via browser GPS
+  const handleDetectLocation = () => {
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserCoords(coords);
+          fetchRouteAndDuration(coords.lat, coords.lng);
+        },
+        (err) => {
+          console.warn('Geolocation ditolak/gagal, memakai titik default Mojolangu', err);
+          fetchRouteAndDuration(userCoords.lat, userCoords.lng);
         }
-      )
-      .subscribe();
-
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(timer);
-    };
-  }, []);
-
-  const currentPoliQueues = queueList.filter((p) => p.poli === selectedPoli);
-
-  const nextQueueNumber = currentPoliQueues.length > 0 
-    ? Math.max(...currentPoliQueues.map((p) => p.queue_number)) + 1 
-    : 1;
-
-  const activePoliPatient = currentPoliQueues.find((p) => p.status === 'in-progress');
-  const currentPoliQueueNum = activePoliPatient 
-    ? activePoliPatient.queue_number 
-    : (currentPoliQueues.find((p) => p.status === 'waiting')?.queue_number || 0);
-
-  const handlePatientSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage('');
-    setIsSubmitting(true);
-
-    if (!patientName.trim() || !selectedPoli || !locationName.trim() || travelTime === '') {
-      setErrorMessage(
-        locationMode === 'auto'
-          ? 'Silakan tekan tombol "Cari Posisi GPS Saya" terlebih dahulu.'
-          : 'Semua field lokasi dan estimasi jarak wajib diisi.'
       );
-      setIsSubmitting(false);
-      return;
+    } else {
+      fetchRouteAndDuration(userCoords.lat, userCoords.lng);
     }
-
-    const { data: latestPoliData } = await supabase
-      .from('queues')
-      .select('queue_number')
-      .eq('poli', selectedPoli)
-      .order('queue_number', { ascending: false })
-      .limit(1);
-
-    const latestNumber = (latestPoliData && latestPoliData.length > 0) 
-      ? latestPoliData[0].queue_number + 1 
-      : 1;
-
-    const finalLocationLabel = locationMode === 'manual'
-      ? `${locationName} (${distanceType === 'less_1' ? '<1 km' : `${customDistanceKm || 1} km`})`
-      : `${locationName} (${detectedDistanceKm || 0} km)`;
-
-    const newPatient = {
-      queue_number: latestNumber,
-      name: patientName,
-      poli: selectedPoli,
-      location: finalLocationLabel,
-      travel_mode: travelMode,
-      travel_time: Number(travelTime),
-      status: 'waiting'
-    };
-
-    const { data: insertedData, error } = await supabase
-      .from('queues')
-      .insert([newPatient])
-      .select();
-
-    if (error) {
-      setErrorMessage('Gagal mendaftar antrean: ' + error.message);
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (insertedData && insertedData.length > 0) {
-      const savedItem = insertedData[0];
-      setRegisteredQueueId(savedItem.id);
-      activeIdRef.current = savedItem.id;
-      setAssignedQueue(latestNumber);
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedItem));
-    }
-
-    setStep('dashboard');
-    setIsSubmitting(false);
   };
 
-  const handleConfirmEdit = async () => {
-    setIsUpdatingOldData(true);
-    if (registeredQueueId) {
-      await supabase
-        .from('queues')
-        .update({ status: 'cancelled' })
-        .eq('id', registeredQueueId);
-      
-      setRegisteredQueueId(null);
-      activeIdRef.current = null;
-    }
+  useEffect(() => {
+    fetchRouteAndDuration(userCoords.lat, userCoords.lng);
+  }, []);
 
-    localStorage.removeItem(STORAGE_KEY);
-    setIsUpdatingOldData(false);
-    setShowEditWarning(false);
-    setStep('form');
-  };
-
-  const waitingPatientsBeforeUser = currentPoliQueues.filter(
-    (p) => p.queue_number < assignedQueue && p.status === 'waiting'
-  ).length;
-  
-  const estimatedWaitMinutes = waitingPatientsBeforeUser * avgServiceTime;
-  const estimatedCallDate = new Date(currentTime.getTime() + estimatedWaitMinutes * 60000);
-  const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
-  const departureDate = new Date(estimatedCallDate.getTime() - (numericTravelTime + 5) * 60000);
-
-  const formatTime = (date: Date) => date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  useEffect(() => {
+    fetchQueueEstimate();
+  }, [currentQueue, travelTime]);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden relative">
+    <main className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-5">
         
-        {/* Header Pasien RSUB */}
-        <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-sky-700 p-6 text-white text-center relative">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
-            🏥 {RS_SHORT}
+        {/* Header Poli & RS */}
+        <div className="border-b pb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
+              Live Queue Tracker
+            </span>
+            <button
+              onClick={handleDetectLocation}
+              className="text-xs text-blue-600 hover:underline font-medium"
+            >
+              📍 Perbarui Lokasi
+            </button>
           </div>
-          <h1 className="text-xl font-black tracking-tight">{RS_NAME}</h1>
-          <p className="text-[11px] text-blue-100/90 mt-1">{RS_ADDRESS}</p>
+          <h1 className="text-xl font-bold text-slate-800 mt-2">SmartArrive AI</h1>
+          <p className="text-sm text-slate-500">Poli Umum — RS Universitas Brawijaya</p>
         </div>
 
-        {/* Notifikasi Sesi Di-reset Admin */}
-        {resetNotice && (
-          <div className="mx-6 mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center gap-2 animate-bounce">
-            <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span>Sesi antrean poli telah direset oleh petugas RSUB. Silakan daftar kembali jika dibutuhkan.</span>
-          </div>
-        )}
-
-        {/* Notifikasi Pelayanan Selesai */}
-        {completedNotice && (
-          <div className="mx-6 mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-center gap-2.5">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-            <div>
-              <p className="font-bold">Pelayanan Selesai!</p>
-              <p className="text-[11px] text-emerald-700 mt-0.5">
-                Pemeriksaan Anda di {RS_SHORT} telah selesai. Terima kasih atas kunjungan Anda.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {step === 'form' ? (
-          <form onSubmit={handlePatientSubmit} className="p-6 space-y-4">
-            {errorMessage && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{errorMessage}</span>
-              </div>
+        {/* Peta Leaflet & Rute OSRM */}
+        <div className="rounded-xl overflow-hidden border border-slate-200 h-48 w-full relative z-0">
+          <MapContainer
+            center={[RSUB_COORDS.lat, RSUB_COORDS.lng]}
+            zoom={15}
+            scrollWheelZoom={false}
+            className="h-full w-full"
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            {/* Titik User */}
+            <Marker position={[userCoords.lat, userCoords.lng]}>
+              <Popup>Posisi Pasien</Popup>
+            </Marker>
+            {/* Titik Masuk RSUB */}
+            <Marker position={[RSUB_COORDS.lat, RSUB_COORDS.lng]}>
+              <Popup>Gerbang Masuk RSUB</Popup>
+            </Marker>
+            {/* Garis Rute */}
+            {routeCoords.length > 0 && (
+              <Polyline positions={routeCoords} color="#2563eb" weight={5} />
             )}
+          </MapContainer>
+        </div>
 
-            {/* Pilihan Poliklinik RSUB */}
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
-                Pilih Poliklinik RSUB Tujuan *
-              </label>
-              <div className="relative">
-                <Building2 className="w-4 h-4 text-blue-600 absolute left-3.5 top-3.5 pointer-events-none" />
-                <select
-                  required
-                  value={selectedPoli}
-                  onChange={(e) => setSelectedPoli(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-blue-50/40 border border-blue-200 font-semibold text-blue-950 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition appearance-none cursor-pointer"
-                >
-                  {POLI_LIST.map((poli) => (
-                    <option key={poli} value={poli}>
-                      {poli}
-                    </option>
-                  ))}
-                </select>
+        {/* Status Jarak */}
+        {distanceKm !== null && (
+          <div className="flex justify-between items-center text-xs text-slate-500 px-1">
+            <span>Jarak Rute Aktual ke RSUB:</span>
+            <span className="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+              {distanceKm} km
+            </span>
+          </div>
+        )}
+
+        {/* Status Antrean */}
+        <div className="grid grid-cols-2 gap-3 text-center">
+          <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl">
+            <p className="text-xs text-slate-500 font-medium">Antrean Saat Ini</p>
+            <p className="text-2xl font-extrabold text-slate-800 mt-1">#{currentQueue}</p>
+          </div>
+          <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl">
+            <p className="text-xs text-blue-600 font-medium">Nomor Kamu</p>
+            <p className="text-2xl font-extrabold text-blue-700 mt-1">#{userQueue}</p>
+          </div>
+        </div>
+
+        {/* Panel Rekomendasi Waktu Keberangkatan */}
+        {data && (
+          <div className="space-y-2.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Sisa antrean di depan:</span>
+              <span className="font-semibold text-slate-800">{data.remainingPeople} pasien</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Estimasi giliran:</span>
+              <span className="font-semibold text-slate-800">{data.estimatedCallTime}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-600">Waktu perjalanan (OSRM):</span>
+              <span className="font-semibold text-slate-800">±{travelTime} menit</span>
+            </div>
+
+            <div className="pt-2 border-t border-slate-200">
+              <div className="flex justify-between items-center bg-blue-600 text-white p-3 rounded-lg">
+                <div>
+                  <p className="text-xs text-blue-100 font-medium">Rekomendasi Berangkat</p>
+                  <p className="text-lg font-bold">{data.departureTime}</p>
+                </div>
+                <span className="text-2xl">🚗</span>
               </div>
             </div>
 
-            {/* Nomor Antrean Otomatis Sesuai Poli */}
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                  <Hash className="w-3.5 h-3.5 text-blue-600" /> Antrean {selectedPoli}
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  {currentPoliQueues.filter((p) => p.status === 'waiting').length} pasien menunggu di poli ini
-                </p>
-              </div>
-              <div className="flex items-center gap-1 bg-white px-3.5 py-1.5 rounded-xl border border-blue-200 shadow-sm">
-                <span className="text-xs font-bold text-blue-500">#</span>
-                <span className="font-extrabold text-xl text-blue-600">{nextQueueNumber}</span>
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-400 italic text-center pt-1">
+              *Sudah termasuk cadangan {data.bufferMinutes} menit sebelum nomor dipanggil.
+            </p>
+          </div>
+        )}
 
-            {/* Nama Pasien */}
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
-                Nama Lengkap Pasien *
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                <input
-                  type="text"
-                  required
-                  value={patientName}
-                  onChange={(e) => setPatientName(e.target.value)}
-                  placeholder="Masukkan nama lengkap pasien"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-                />
-              </div>
-            </div>
-
-            {/* Lokasi Keberangkatan (Dua Tab: Otomatis GPS vs Input Manual) */}
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                  Lokasi Keberangkatan ke RSUB *
-                </label>
-                {/* Switcher Tab */}
-                <div className="flex bg-slate-100 p-0.5 rounded-lg text-[11px] font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocationMode('auto');
-                      setLocationName('');
-                      setDetectedDistanceKm(null);
-                      setUserCoords(null);
-                      setRouteGeoJSON(null);
-                      setTravelTime('');
-                      setGpsStatusText('');
-                    }}
-                    className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 ${
-                      locationMode === 'auto' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Compass className="w-3 h-3" /> Otomatis (GPS)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocationMode('manual');
-                      setLocationName('');
-                      setUserCoords(null);
-                      setRouteGeoJSON(null);
-                      setDistanceType('less_1');
-                      setCustomDistanceKm('');
-                      setTravelTime(calculateDurationFromKm(0.8, travelMode));
-                      setGpsStatusText('');
-                    }}
-                    className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 ${
-                      locationMode === 'manual' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Edit3 className="w-3 h-3" /> Input Manual
-                  </button>
-                </div>
-              </div>
-
-              {/* TAMPILAN TAB 1: OTOMATIS (GPS DENGAN PETA INTERAKTIF) */}
-              {locationMode === 'auto' ? (
-                <div className="space-y-2.5 bg-blue-50/50 p-3.5 rounded-2xl border border-blue-100">
-                  <button
-                    type="button"
-                    onClick={handleDetectGps}
-                    disabled={isDetectingGps}
-                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition shadow-md shadow-blue-500/20 active:scale-[0.99]"
-                  >
-                    {isDetectingGps ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Mendeteksi Koordinat Pasien...</span>
-                      </>
-                    ) : (
-                      <>
-                        <LocateFixed className="w-4 h-4" />
-                        <span>Cari Posisi GPS Saya & Buat Rute</span>
-                      </>
-                    )}
-                  </button>
-
-                  {/* Panel Peta & Hasil Deteksi */}
-                  {detectedDistanceKm !== null && userCoords ? (
-                    <div className="bg-white p-3 rounded-xl border border-blue-200 shadow-sm space-y-3">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-[10px] text-slate-400 font-semibold block">Posisi Terdeteksi</span>
-                          <p className="text-xs font-bold text-slate-800 truncate">{locationName}</p>
-                        </div>
-                      </div>
-
-                      {/* Komponen Peta Rute Leaflet */}
-                      <RouteMap
-                        userCoords={userCoords}
-                        hospitalCoords={RSUB_COORDS}
-                        routeGeoJSON={routeGeoJSON}
-                      />
-
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-xs text-slate-500">Jarak Rute Aktual ke RSUB:</span>
-                        <span className="text-sm font-extrabold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-100">
-                          {detectedDistanceKm} km
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-slate-500 text-center italic py-1">
-                      Klik tombol di atas untuk melihat peta rute dan menghitung jarak Anda ke RSUB.
-                    </p>
-                  )}
-
-                  {gpsStatusText && (
-                    <p className="text-[10px] text-blue-600 font-medium text-center">{gpsStatusText}</p>
-                  )}
-                </div>
-              ) : (
-                /* TAMPILAN TAB 2: INPUT MANUAL */
-                <div className="space-y-2.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                      Alamat / Nama Tempat Keberangkatan
-                    </label>
-                    <div className="relative">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                      <input
-                        type="text"
-                        required
-                        value={locationName}
-                        onChange={(e) => setLocationName(e.target.value)}
-                        placeholder="Contoh: Jl. Soekarno Hatta No. 9, Jatimulyo"
-                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                      Estimasi Jarak ke RSUB
-                    </label>
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      <button
-                        type="button"
-                        onClick={() => setDistanceType('less_1')}
-                        className={`py-1.5 px-3 rounded-xl text-xs font-semibold border transition ${
-                          distanceType === 'less_1'
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        &lt; 1 km (Sangat Dekat RSUB)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDistanceType('custom')}
-                        className={`py-1.5 px-3 rounded-xl text-xs font-semibold border transition ${
-                          distanceType === 'custom'
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        ≥ 1 km (Isi Jarak Km)
-                      </button>
-                    </div>
-
-                    {distanceType === 'custom' && (
-                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                        <span className="text-xs text-slate-500">Jarak rute ke RSUB:</span>
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="1"
-                          max="150"
-                          required
-                          value={customDistanceKm}
-                          onChange={(e) => setCustomDistanceKm(e.target.value ? Number(e.target.value) : '')}
-                          placeholder="Misal: 3.5"
-                          className="w-20 font-bold text-xs text-slate-800 bg-transparent focus:outline-none text-center border-b border-blue-500"
-                        />
-                        <span className="text-xs font-bold text-slate-700">km</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Moda Transportasi & Durasi */}
-              <div className="flex items-center gap-2 pt-1">
-                <div className="flex bg-slate-100 p-1 rounded-xl flex-1">
-                  <button
-                    type="button"
-                    onClick={() => setTravelMode('motor')}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
-                      travelMode === 'motor' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Bike className="w-3.5 h-3.5" /> Motor
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTravelMode('mobil')}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
-                      travelMode === 'mobil' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Car className="w-3.5 h-3.5" /> Mobil
-                  </button>
-                </div>
-                
-                <div className="w-32 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 flex flex-col items-center">
-                  <span className="text-[10px] text-slate-400">Durasi ke RSUB</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      max="180"
-                      value={travelTime}
-                      onChange={(e) => setTravelTime(e.target.value ? Number(e.target.value) : '')}
-                      placeholder="0"
-                      className="w-10 text-center text-xs font-bold text-blue-700 bg-transparent focus:outline-none"
-                    />
-                    <span className="text-[10px] font-semibold text-slate-500">menit</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
+        {/* Panel Kontrol Simulasi (Demo Juri) */}
+        <div className="pt-2 border-t border-slate-200 space-y-2">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Kontrol Simulasi Antrean
+          </p>
+          <div className="flex gap-2">
             <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 transition active:scale-[0.98]"
+              onClick={() => setCurrentQueue((prev) => Math.min(userQueue, prev + 1))}
+              disabled={currentQueue >= userQueue}
+              className="flex-1 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white rounded-lg transition"
             >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Mendaftarkan Antrean RSUB...
-                </>
-              ) : (
-                <>
-                  Hitung Rekomendasi Jam Berangkat
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
+              +1 Pasien Selesai
             </button>
-          </form>
-        ) : (
-          /* DASHBOARD TRACKER PASIEN */
-          <div className="p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Pasien Terdaftar RSUB</span>
-                <h2 className="text-base font-bold text-slate-800">{patientName}</h2>
-                <div className="flex items-center gap-1 text-xs text-blue-600 font-semibold mt-0.5">
-                  <Stethoscope className="w-3.5 h-3.5" />
-                  {selectedPoli} — {RS_SHORT}
-                </div>
-              </div>
-              <button
-                onClick={() => setShowEditWarning(true)}
-                className="text-xs font-semibold text-rose-500 hover:text-rose-600 flex items-center gap-1 p-1.5 rounded-lg hover:bg-rose-50 transition border border-rose-100"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" /> Ubah Data
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 text-center">
-                <span className="text-[11px] font-medium text-slate-500 block mb-1">
-                  Panggilan {selectedPoli}
-                </span>
-                <span className="text-3xl font-extrabold text-slate-800">
-                  {currentPoliQueueNum ? `#${currentPoliQueueNum}` : '-'}
-                </span>
-              </div>
-              <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3.5 text-center">
-                <span className="text-[11px] font-medium text-blue-600 block mb-1">Nomor Kamu</span>
-                <span className="text-3xl font-extrabold text-blue-600">#{assignedQueue}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-100 text-xs">
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Titik Berangkat:</span>
-                <span className="font-semibold text-slate-800 truncate max-w-[180px]">{locationName}</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Antrean di depan ({selectedPoli}):</span>
-                <span className="font-bold text-slate-800 text-sm">{waitingPatientsBeforeUser} pasien</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Perkiraan giliran dipanggil:</span>
-                <span className="font-bold text-slate-800 text-sm">
-                  {waitingPatientsBeforeUser > 0 ? formatTime(estimatedCallDate) : 'Sekarang!'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Waktu tempuh ke RSUB ({travelMode === 'motor' ? 'Motor' : 'Mobil'}):</span>
-                <span className="font-bold text-slate-800">±{numericTravelTime} menit</span>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white p-4 rounded-2xl shadow-lg shadow-blue-700/20 text-center relative overflow-hidden">
-              <div className="relative z-10">
-                <span className="text-xs uppercase tracking-wider text-blue-100 font-semibold block mb-0.5">
-                  Rekomendasi Berangkat Menuju RSUB
-                </span>
-                <div className="text-3xl font-black tracking-tight my-1">
-                  {waitingPatientsBeforeUser > 0 ? formatTime(departureDate) : 'Segera Menuju Ruangan'}
-                </div>
-                <p className="text-[10px] text-blue-100/90 italic">
-                  *Tersinkronisasi khusus antrean dokter {selectedPoli}.
-                </p>
-              </div>
-            </div>
+            <button
+              onClick={() => setCurrentQueue(10)}
+              className="px-3 py-2 text-xs font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition"
+            >
+              Reset
+            </button>
           </div>
-        )}
-
-        {/* Modal Peringatan Ubah Data */}
-        {showEditWarning && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 text-center">
-              <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-rose-100">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              
-              <h3 className="text-base font-bold text-slate-800 mb-1">
-                Peringatan Perubahan Data
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed mb-5">
-                Mengubah data akan membatalkan antrean <span className="font-bold text-rose-600">#{assignedQueue} ({selectedPoli})</span> di RSUB. Anda perlu mendaftar antrean baru setelahnya.
-              </p>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={isUpdatingOldData}
-                  onClick={() => setShowEditWarning(false)}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isUpdatingOldData}
-                  onClick={handleConfirmEdit}
-                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-1.5"
-                >
-                  {isUpdatingOldData ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Memproses...
-                    </>
-                  ) : (
-                    'Ya, Ubah Data'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
 
       </div>
-    </div>
+    </main>
   );
 }
