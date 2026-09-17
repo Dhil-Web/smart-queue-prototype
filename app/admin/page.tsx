@@ -205,7 +205,7 @@ export default function AdminDashboardPage() {
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                placeholder="Masukkan PIN (Default: 1234)"
+                placeholder="Masukkan PIN"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
@@ -214,7 +214,7 @@ export default function AdminDashboardPage() {
               type="submit"
               className="w-full py-3 bg-blue-700 hover:bg-blue-800 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-700/25"
             >
-              Buka Konsol Loket RSUB
+              Login
             </button>
           </form>
         </div>
