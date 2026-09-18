@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { 
-  Lock, 
   KeyRound, 
   Building2, 
   CheckCircle2, 
@@ -11,7 +11,6 @@ import {
   LogOut, 
   AlertCircle,
   Users,
-  Clock,
   MapPin,
   Bike,
   Car
@@ -124,8 +123,16 @@ export default function AdminPage() {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans text-slate-800">
         <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-xl border border-slate-200 text-center">
-          <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100 shadow-sm">
-            <Lock className="w-7 h-7" />
+          
+          {/* Logo pada Kartu Login */}
+          <div className="relative w-16 h-16 mx-auto mb-3 drop-shadow-sm">
+            <Image 
+              src="/logo.png" 
+              alt="Logo" 
+              fill 
+              className="object-contain" 
+              priority 
+            />
           </div>
 
           <h1 className="text-xl font-black text-slate-800 tracking-tight">Portal Petugas RSUB</h1>
@@ -170,13 +177,23 @@ export default function AdminPage() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-4xl mx-auto space-y-6">
         
-        {/* Header Konsol */}
+        {/* Header Konsol dengan Logo */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider bg-blue-50 px-2.5 py-1 rounded-full">
-              {RS_SHORT} Operator
-            </span>
-            <h1 className="text-xl font-black text-slate-800 mt-1">Konsol Pemanggilan Pasien</h1>
+          <div className="flex items-center gap-3">
+            <div className="relative w-11 h-11 flex-shrink-0 drop-shadow-sm">
+              <Image 
+                src="/logo.png" 
+                alt="Logo" 
+                fill 
+                className="object-contain" 
+              />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider bg-blue-50 px-2.5 py-1 rounded-full">
+                {RS_SHORT} Operator
+              </span>
+              <h1 className="text-xl font-black text-slate-800 mt-1">Konsol Pemanggilan Pasien</h1>
+            </div>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { 
   User, 
@@ -134,7 +135,6 @@ export default function PatientPage() {
         try {
           setGpsStatusText('Membaca nama wilayah (Nominatim)...');
 
-          // Reverse Geocoding otomatis Nominatim OpenStreetMap
           const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${userLat}&lon=${userLng}`;
           const geoRes = await fetch(nominatimUrl, {
             headers: {
@@ -155,7 +155,6 @@ export default function PatientPage() {
           }
           setLocationName(resolvedAddress);
 
-          // Routing OSRM ke Kimia Farma RSUB
           setGpsStatusText('Menggambar rute ke RSUB...');
           const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${RSUB_COORDS.lng},${RSUB_COORDS.lat}?overview=full&geometries=geojson`;
           const osrmRes = await fetch(osrmUrl);
@@ -433,13 +432,22 @@ export default function PatientPage() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-100 overflow-hidden relative">
         
-        {/* Header Pasien RSUB */}
-        <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-sky-700 p-6 text-white text-center relative">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-2 text-blue-100">
+        {/* Header Pasien RSUB dengan Logo Baru */}
+        <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-sky-700 p-6 text-white text-center relative flex flex-col items-center">
+          <div className="relative w-14 h-14 mb-2 drop-shadow-md">
+            <Image 
+              src="/logo.png" 
+              alt="Logo" 
+              fill 
+              className="object-contain" 
+              priority 
+            />
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm mb-1.5 text-blue-100">
             🏥 {RS_SHORT}
           </div>
           <h1 className="text-xl font-black tracking-tight">{RS_NAME}</h1>
-          <p className="text-[11px] text-blue-100/90 mt-1">{RS_ADDRESS}</p>
+          <p className="text-[11px] text-blue-100/90 mt-0.5">{RS_ADDRESS}</p>
         </div>
 
         {/* Notifikasi Sesi Di-reset Admin */}
