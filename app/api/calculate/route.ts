@@ -1,47 +1,56 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await req.json();
     const {
-      currentQueue = 10,
-      userQueue = 15,
-      avgServiceTime = 6, // Rata-rata menit per pasien
-      travelTimeMinutes = 15, // Didapat dari routing OSRM / TomTom
-      lastCalledTimeStr, // Opsional: misal "10:15"
+      currentQueue = 0,
+      userQueue = 1,
+      avgServiceTime = 6,
+      travelTimeMinutes = 15,
+      lastCalledTimeStr,
     } = body;
 
-    const remainingPeople = Math.max(0, userQueue - currentQueue);
-    const waitTimeMinutes = remainingPeople * avgServiceTime;
+    const remainingPeople = Math.max(0, Number(userQueue) - Number(currentQueue));
+    const waitTimeMinutes = remainingPeople * Number(avgServiceTime);
 
     const now = new Date();
-
-    // Waktu estimasi pasien ini akan dipanggil
-    const estimatedCallDate = new Date(now.getTime() + waitTimeMinutes * 60000);
-
-    // Buffer waktu parkir & registrasi ulang di poli (misal 5 menit)
     const bufferMinutes = 5;
-    const totalPrepMinutes = travelTimeMinutes + bufferMinutes;
 
-    // Rekomendasi waktu berangkat dari rumah
-    const departureDate = new Date(estimatedCallDate.getTime() - totalPrepMinutes * 60000);
+    // Kalkulasi timestamp penambahan waktu
+    const estimatedCallTimestamp = now.getTime() + waitTimeMinutes * 60 * 1000;
+    const estimatedCallDate = new Date(estimatedCallTimestamp);
 
-    const formatTime = (date: Date) =>
-      date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+    const departureTimestamp =
+      estimatedCallTimestamp - (Number(travelTimeMinutes) + bufferMinutes) * 60 * 1000;
+    const departureDate = new Date(departureTimestamp);
+
+    // Format jam wajib mengunci timeZone ke Asia/Jakarta (WIB)
+    const formatToWIB = (date: Date) => {
+      return (
+        date.toLocaleTimeString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).replace('.', ':') + ' WIB'
+      );
+    };
 
     return NextResponse.json({
       success: true,
-      lastCalledAt: lastCalledTimeStr || formatTime(now),
-      currentQueue,
-      userQueue,
+      lastCalledAt: lastCalledTimeStr || formatToWIB(now),
       remainingPeople,
-      travelTimeMinutes,
+      waitTimeMinutes,
+      estimatedCallTime: formatToWIB(estimatedCallDate),
+      recommendedDepartureTime: formatToWIB(departureDate),
       bufferMinutes,
-      estimatedCallTime: formatTime(estimatedCallDate),
-      recommendedDepartureTime: formatTime(departureDate),
-      isUrgent: departureDate <= now, // Jika waktu berangkat sudah lewat/mepet
+      isUrgent: departureTimestamp <= now.getTime(),
     });
-  } catch (error) {
-    return NextResponse.json({ error: 'Gagal memproses estimasi antrean' }, { status: 400 });
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: error?.message || 'Gagal kalkulasi waktu' },
+      { status: 400 }
+    );
   }
 }
