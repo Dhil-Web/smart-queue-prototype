@@ -20,7 +20,10 @@ import {
   CheckCircle2,
   LocateFixed,
   Edit3,
-  Compass
+  Compass,
+  Bell,
+  Clock,
+  Navigation
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { POLI_LIST, RS_NAME, RS_SHORT, RS_ADDRESS } from '@/lib/constants';
@@ -48,6 +51,17 @@ interface PatientQueue {
   travel_mode: 'motor' | 'mobil';
   travel_time: number;
   status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
+  updated_at?: string;
+  created_at?: string;
+}
+
+interface CalculationResult {
+  lastCalledAt: string;
+  remainingPeople: number;
+  estimatedCallTime: string;
+  recommendedDepartureTime: string;
+  bufferMinutes: number;
+  isUrgent: boolean;
 }
 
 const STORAGE_KEY = 'smartarrive_patient_session';
@@ -84,11 +98,14 @@ export default function PatientPage() {
   const [completedNotice, setCompletedNotice] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Hasil Kalkulasi Server
+  const [calcResult, setCalcResult] = useState<CalculationResult | null>(null);
+
   // Modal Peringatan Ubah Data
   const [showEditWarning, setShowEditWarning] = useState(false);
   const [isUpdatingOldData, setIsUpdatingOldData] = useState(false);
 
-  const avgServiceTime = 5;
+  const avgServiceTime = 6;
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const activeIdRef = useRef<number | null>(null);
@@ -335,6 +352,40 @@ export default function PatientPage() {
     ? activePoliPatient.queue_number 
     : (currentPoliQueues.find((p) => p.status === 'waiting')?.queue_number || 0);
 
+  // Waktu pemanggilan antrean sebelumnya
+  const lastCalledTimeFormatted = activePoliPatient && activePoliPatient.updated_at
+    ? new Date(activePoliPatient.updated_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB'
+    : currentTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+
+  // Request kalkulasi cerdas ke API Backend
+  useEffect(() => {
+    if (step === 'dashboard') {
+      const runCalculation = async () => {
+        try {
+          const res = await fetch('/api/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              currentQueue: currentPoliQueueNum,
+              userQueue: assignedQueue,
+              avgServiceTime,
+              travelTimeMinutes: typeof travelTime === 'number' ? travelTime : 15,
+              lastCalledTimeStr: lastCalledTimeFormatted,
+            }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            setCalcResult(data);
+          }
+        } catch (err) {
+          console.error('Kalkulasi API error:', err);
+        }
+      };
+
+      runCalculation();
+    }
+  }, [step, currentPoliQueueNum, assignedQueue, travelTime, lastCalledTimeFormatted]);
+
   const handlePatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -420,13 +471,8 @@ export default function PatientPage() {
   const waitingPatientsBeforeUser = currentPoliQueues.filter(
     (p) => p.queue_number < assignedQueue && p.status === 'waiting'
   ).length;
-  
-  const estimatedWaitMinutes = waitingPatientsBeforeUser * avgServiceTime;
-  const estimatedCallDate = new Date(currentTime.getTime() + estimatedWaitMinutes * 60000);
-  const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
-  const departureDate = new Date(estimatedCallDate.getTime() - (numericTravelTime + 5) * 60000);
 
-  const formatTime = (date: Date) => date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const numericTravelTime = typeof travelTime === 'number' ? travelTime : 0;
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
@@ -777,7 +823,7 @@ export default function PatientPage() {
           </form>
         ) : (
           /* DASHBOARD TRACKER PASIEN */
-          <div className="p-6 space-y-5">
+          <div className="p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Pasien Terdaftar RSUB</span>
@@ -795,6 +841,7 @@ export default function PatientPage() {
               </button>
             </div>
 
+            {/* Status Nomor Antrean */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 text-center">
                 <span className="text-[11px] font-medium text-slate-500 block mb-1">
@@ -805,42 +852,92 @@ export default function PatientPage() {
                 </span>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3.5 text-center">
-                <span className="text-[11px] font-medium text-blue-600 block mb-1">Nomor Kamu</span>
+                <span className="text-[11px] font-medium text-blue-600 block mb-1">Nomor Anda</span>
                 <span className="text-3xl font-extrabold text-blue-600">#{assignedQueue}</span>
               </div>
             </div>
 
-            <div className="space-y-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-100 text-xs">
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Titik Berangkat:</span>
-                <span className="font-semibold text-slate-800 truncate max-w-[180px]">{locationName}</span>
+            {/* Peta Mini Live Tracker */}
+            {userCoords && (
+              <div className="rounded-2xl overflow-hidden border border-slate-200">
+                <RouteMap
+                  userCoords={userCoords}
+                  hospitalCoords={RSUB_COORDS}
+                  routeGeoJSON={routeGeoJSON}
+                />
               </div>
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Antrean di depan ({selectedPoli}):</span>
-                <span className="font-bold text-slate-800 text-sm">{waitingPatientsBeforeUser} pasien</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-600">
-                <span>Perkiraan giliran dipanggil:</span>
-                <span className="font-bold text-slate-800 text-sm">
-                  {waitingPatientsBeforeUser > 0 ? formatTime(estimatedCallDate) : 'Sekarang!'}
+            )}
+
+            {/* Panel Ringkasan Detail Estimasi Antrean */}
+            <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                <span className="text-slate-500 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  Waktu Pemanggilan Sebelumnya:
+                </span>
+                <span className="font-bold text-slate-700">
+                  {calcResult?.lastCalledAt || lastCalledTimeFormatted}
                 </span>
               </div>
+
               <div className="flex justify-between items-center text-slate-600">
-                <span>Waktu tempuh ke RSUB ({travelMode === 'motor' ? 'Motor' : 'Mobil'}):</span>
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                  Titik Berangkat:
+                </span>
+                <span className="font-semibold text-slate-800 truncate max-w-[180px]">{locationName}</span>
+              </div>
+
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-slate-400" />
+                  Antrean di depan ({selectedPoli}):
+                </span>
+                <span className="font-bold text-slate-800">
+                  {calcResult?.remainingPeople ?? waitingPatientsBeforeUser} pasien
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-1.5">
+                  <Navigation className="w-3.5 h-3.5 text-slate-400" />
+                  Estimasi Perjalanan ({travelMode === 'motor' ? 'Motor' : 'Mobil'}):
+                </span>
                 <span className="font-bold text-slate-800">±{numericTravelTime} menit</span>
+              </div>
+
+              <div className="flex justify-between items-center text-indigo-700 bg-indigo-50/70 px-2.5 py-1.5 rounded-xl border border-indigo-100 font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Bell className="w-3.5 h-3.5" />
+                  Perkiraan Giliran Anda Dipanggil:
+                </span>
+                <span className="font-bold text-indigo-900">
+                  {calcResult?.estimatedCallTime || 'Menghitung...'}
+                </span>
               </div>
             </div>
 
-            <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white p-4 rounded-2xl shadow-lg shadow-blue-700/20 text-center relative overflow-hidden">
+            {/* Banner Jadwal Berangkat Otomatis */}
+            <div
+              className={`p-4 rounded-2xl text-white shadow-lg text-center relative overflow-hidden transition-all duration-300 ${
+                calcResult?.isUrgent || waitingPatientsBeforeUser === 0
+                  ? 'bg-gradient-to-r from-red-600 to-rose-600 shadow-rose-600/20'
+                  : 'bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 shadow-blue-700/20'
+              }`}
+            >
               <div className="relative z-10">
-                <span className="text-xs uppercase tracking-wider text-blue-100 font-semibold block mb-0.5">
-                  Rekomendasi Berangkat Menuju RSUB
+                <span className="text-xs uppercase tracking-wider text-white/80 font-bold block mb-0.5">
+                  Rekomendasi Waktu Berangkat ke RSUB
                 </span>
                 <div className="text-3xl font-black tracking-tight my-1">
-                  {waitingPatientsBeforeUser > 0 ? formatTime(departureDate) : 'Segera Menuju Ruangan'}
+                  {waitingPatientsBeforeUser === 0
+                    ? 'Segera Menuju Ruangan'
+                    : calcResult?.recommendedDepartureTime || 'Menghitung...'}
                 </div>
-                <p className="text-[10px] text-blue-100/90 italic">
-                  *Tersinkronisasi khusus antrean dokter {selectedPoli}.
+                <p className="text-[11px] text-white/90">
+                  {waitingPatientsBeforeUser === 0
+                    ? 'Antrean Anda sedang dipanggil dokter.'
+                    : `*Sudah termasuk toleransi parkir & registrasi ulang ${calcResult?.bufferMinutes || 5} menit.`}
                 </p>
               </div>
             </div>
